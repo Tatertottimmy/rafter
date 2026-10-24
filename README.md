@@ -2,6 +2,16 @@
 
 Try it: **https://mikemadeit.io/rafter/**
 
+## Run it on your own computer (no install)
+
+1. Download **[rafter.html](https://github.com/Tatertottimmy/rafter/releases/latest/download/rafter.html)**
+   (or the same file from the Export tab on the website).
+2. Double-click it. It opens in your browser and works offline.
+
+That one file has everything inside it (the app, the 3D engine and the fonts), so there is
+nothing else to install. Designs are kept in that browser; use **Save JSON** to keep a copy or
+move a design to another computer.
+
 Parametric Minecraft roof designer that runs in the browser. Lay out footprint boxes, pick a roof
 type and pitch per box, and Rafter builds the roof the way Minecraft builders do: slabs for 1:2,
 stairs for 1:1, block-plus-stair for 2:1, with vanilla stair corner shapes at hips and valleys.
@@ -34,13 +44,15 @@ Static files only. No build tooling, no server code.
 External dependencies load from CDNs at runtime: three.js 0.160.0 (jsDelivr), pako 2.1.0 (cdnjs),
 Google Fonts. The page needs internet access for those; everything else is local.
 
-## Hosting
+## Building
 
-It is a static site with no build step: serve the folder from any web server (nginx, Apache,
-Caddy, GitHub Pages, `python3 -m http.server`). `.js` files must be served as `text/javascript`,
-which every common server does by default. The `test/` folder does not need to be published.
+No build step is needed to develop: serve the folder with any static web server
+(`python3 -m http.server`, nginx, Caddy, ...) and open it. `.js` files must be served as
+`text/javascript`, which every common server does by default.
 
-After editing `page.html`, run `python3 build.py` to regenerate `index.html`.
+- `python3 build.py` regenerates `index.html` after editing `page.html`.
+- `node standalone.mjs` (Node 18+) builds `dist/rafter.html`, the single offline file, with
+  three.js, pako and the fonts inlined. It downloads its build tools once into `.standalone-cache/`.
 
 ## Using it
 

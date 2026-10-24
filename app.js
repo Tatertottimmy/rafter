@@ -29,6 +29,8 @@ const PROFILE_OPTIONS = [
 const ROOF_HINT = 'Any block works. Blocks without slabs or stairs build a stepped roof from full blocks.';
 const DIR_OPTIONS = [['north', 'North'], ['south', 'South'], ['east', 'East'], ['west', 'West']];
 const KIND_LABEL = { full: 'block', slab: 'slab', stair: 'stairs', wall: 'wall', pane: 'pane' };
+// Tip jar link (Ko-fi, Buy Me a Coffee, ...). Empty = the support line stays hidden.
+const SUPPORT_URL = '';
 
 // ------------------------------------------------------------------ state
 const state = {
@@ -1572,6 +1574,9 @@ function wire() {
   });
   $('brushBtn').addEventListener('click', () => openPicker($('brushBtn'), { title: 'Brush material', keys: fullFamilies(), current: state.brush, onPick: setBrush }));
   $('btnClearEdits').addEventListener('click', clearEdits);
+  // The single-file copy is already offline; only the hosted site offers the download.
+  if (location.protocol === 'file:') $('offlineNote').hidden = true;
+  if (SUPPORT_URL) { $('supportLink').href = SUPPORT_URL; $('supportNote').hidden = false; }
   $('planCanvas').addEventListener('click', onPlanClick);
   try { const b = localStorage.getItem('rafter.brush'); if (b && FAMILIES[b]) state.brush = b; } catch (e) { /* ignore */ }
   updateToolbar();
