@@ -1,0 +1,737 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>Rafter</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f3f1ec;
+    --panel: #ffffff;
+    --fg: #1f1d1a;
+    --muted: #6d675d;
+    --line: #d9d4ca;
+    --accent: #a4511f;
+    --accent-fg: #ffffff;
+    --viewport-bg: #e5e1d8;
+    --danger: #b3261e;
+    --soft: rgba(31, 29, 26, 0.05);
+    --font-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+    --font-body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
+    --radius: 6px;
+    --radius-lg: 10px;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a;
+      --panel: #1d2024;
+      --fg: #e8e4dc;
+      --muted: #9a948a;
+      --line: #2e3237;
+      --accent: #d9814a;
+      --accent-fg: #1a120c;
+      --viewport-bg: #1c1f24;
+      --danger: #ef7a72;
+      --soft: rgba(232, 228, 220, 0.06);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a;
+    --panel: #1d2024;
+    --fg: #e8e4dc;
+    --muted: #9a948a;
+    --line: #2e3237;
+    --accent: #d9814a;
+    --accent-fg: #1a120c;
+    --viewport-bg: #1c1f24;
+    --danger: #ef7a72;
+    --soft: rgba(232, 228, 220, 0.06);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  #app, body { max-width: 100%; overflow-x: hidden; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 1.4;
+    overflow-x: hidden;
+    -webkit-text-size-adjust: 100%;
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* ---------- shell ---------- */
+  #app {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 10px;
+  }
+  @media (min-width: 901px) {
+    #app { height: 100vh; height: 100dvh; }
+  }
+
+  /* ---------- header ---------- */
+  .topbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+    min-height: 40px;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .topbar > * { min-width: 0; max-width: 100%; }
+  .brand { flex: 0 0 auto; }
+  .brand {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: -0.01em;
+    margin: 0;
+    line-height: 1;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .brand svg { width: 22px; height: 22px; color: var(--accent); }
+  .brand small { font-family: var(--font-body); font-weight: 400; font-size: 11px; color: var(--muted); letter-spacing: 0; }
+  #designName {
+    flex: 1 1 160px;
+    width: auto;
+    max-width: min(100%, 280px);
+    min-width: 0;
+  }
+  .palette {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    padding-bottom: 2px;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 240px;
+    min-width: 0;
+  }
+  .palette > * { flex: none; }
+  .palette-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-right: 2px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+    padding: 3px 8px 3px 4px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--panel);
+    cursor: pointer;
+    max-width: 100%;
+  }
+  .chip img, .chip canvas { width: 22px; height: 22px; display: block; image-rendering: pixelated; }
+  .chip .count { font-family: var(--font-mono); color: var(--muted); font-size: 11px; }
+  .chip > span:not(.count) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .chip:hover { border-color: var(--accent); }
+  .topbar-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; min-width: 0; }
+
+  /* ---------- controls ---------- */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 5px 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+    cursor: pointer;
+    white-space: nowrap;
+    line-height: 1.3;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--accent); }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+  .btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+  .btn.danger:hover:not(:disabled) { border-color: var(--danger); }
+  .btn.small { padding: 2px 7px; font-size: 12px; }
+  .btn.icon { padding: 4px 6px; min-width: 30px; }
+  input[type="text"], input[type="number"], input[type="search"], select {
+    padding: 5px 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+    min-width: 0;
+    width: 100%;
+  }
+  input[type="number"] { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); margin: 0; }
+  input[type="range"] { accent-color: var(--accent); }
+
+  /* ---------- workspace ---------- */
+  .work {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 290px minmax(0, 1fr) 360px;
+    gap: 10px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    overflow: auto;
+    min-height: 0;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .pane, .fields, .field, .field > *, .matbtn, .legend li, .legend li > *, .layer-stepper, .layer-stepper > *,
+  .export-grid, .export-grid > *, .export-buttons, .props-head, .props-head > *, .section-head, .section-head > *,
+  .hud, .hud > *, .viewport-overlay > * { min-width: 0; }
+  .fields > .field > input, .fields > .field > select { max-width: 100%; }
+  .panel h2, .panel-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 14px;
+    margin: 0;
+    letter-spacing: -0.005em;
+  }
+  .section { padding: 12px 12px 14px; border-bottom: 1px solid var(--line); min-width: 0; }
+  .obj-list li { min-width: 0; }
+  .section:last-child { border-bottom: 0; }
+  .section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .add-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+
+  /* object list */
+  .obj-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .obj-group { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 8px 4px 2px; }
+  .obj-group:first-child { padding-top: 0; }
+  .obj {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 22px 1fr auto;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .obj > * { min-width: 0; }
+  .obj:hover { background: var(--soft); }
+  .obj[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .obj img { width: 22px; height: 22px; display: block; image-rendering: pixelated; }
+  .obj .obj-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .obj .obj-meta { font-family: var(--font-mono); font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 14ch; }
+  .empty { color: var(--muted); font-style: italic; padding: 6px 4px; }
+
+  /* properties */
+  .props-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .props-head .id { font-family: var(--font-mono); color: var(--muted); font-size: 11px; }
+  .props-head .spacer { flex: 1; }
+  fieldset.group {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 8px 10px 10px;
+    margin: 0 0 10px;
+    min-width: 0;
+  }
+  fieldset.group legend {
+    font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 0 4px;
+  }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+  .field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .field.wide { grid-column: 1 / -1; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field.check { flex-direction: row; align-items: center; gap: 8px; padding-top: 4px; }
+  .field.check label { color: var(--fg); }
+  .field .hint { font-size: 11px; color: var(--muted); }
+  .field.action { flex-direction: row; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .popover-body .hint { font-size: 11px; color: var(--muted); margin: 0 0 6px; }
+  .matbtn {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%;
+    padding: 4px 8px 4px 4px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+    cursor: pointer;
+    text-align: left;
+  }
+  .matbtn:hover { border-color: var(--accent); }
+  .matbtn img { width: 28px; height: 28px; display: block; image-rendering: pixelated; flex: none; }
+  .matbtn .mat-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .matbtn .caret { color: var(--muted); font-size: 10px; }
+  .props-actions { display: flex; gap: 6px; justify-content: flex-end; }
+  .field.range { gap: 2px; }
+  .field.range .range-label { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .field.range output { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+  .field.range input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .swatch.auto .auto-blank { width: 48px; height: 48px; display: grid; place-items: center; border: 1px dashed var(--line); border-radius: 4px; color: var(--muted); }
+  #planCanvas.tool { cursor: crosshair; }
+
+  /* viewport */
+  .viewport-wrap {
+    position: relative;
+    min-height: 0;
+    min-width: 0;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    background: var(--viewport-bg);
+  }
+  #viewport { position: absolute; inset: 0; touch-action: none; }
+  #viewport canvas { display: block; outline: none; max-width: 100%; max-height: 100%; }
+  .viewport-overlay {
+    position: absolute;
+    left: 10px; top: 10px; right: 10px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+    pointer-events: none;
+  }
+  .viewport-overlay > * { pointer-events: auto; }
+  .hud {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px;
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    backdrop-filter: blur(6px);
+  }
+  .hud label { font-size: 12px; white-space: nowrap; }
+  .hud output { font-family: var(--font-mono); min-width: 2.5ch; display: inline-block; text-align: right; }
+  .hud input[type="range"] { width: 150px; }
+  .hud.check { gap: 6px; }
+  .viewport-bottom {
+    position: absolute; left: 10px; right: 10px; bottom: 10px;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+    pointer-events: none;
+  }
+  .viewport-bottom > * { pointer-events: auto; }
+  .viewport-bottom > .status, .viewport-bottom > .tool-hint { pointer-events: none; }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; }
+  .toolbar .hud { padding: 3px; gap: 2px; }
+  .seg button {
+    font: inherit; font-size: 12px;
+    padding: 5px 10px;
+    border: 0; border-radius: calc(var(--radius) - 2px);
+    background: transparent; color: var(--fg);
+    cursor: pointer;
+  }
+  .seg button:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+  .matbtn.brush { width: auto; max-width: 220px; padding: 3px 8px 3px 3px; gap: 6px; font-size: 12px; }
+  .matbtn.brush img { width: 24px; height: 24px; }
+  .tool-hint {
+    margin: 0; font-size: 11px; color: var(--muted);
+    padding: 3px 8px;
+    background: color-mix(in srgb, var(--panel) 80%, transparent);
+    border-radius: var(--radius);
+  }
+  .status {
+    font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+    padding: 3px 8px;
+    background: color-mix(in srgb, var(--panel) 80%, transparent);
+    border-radius: var(--radius);
+    pointer-events: none;
+  }
+  .viewport-error {
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+    padding: 24px; text-align: center; color: var(--muted);
+  }
+  .viewport-error p { max-width: 36ch; margin: 0; }
+
+  /* tabs */
+  .tabs {
+    display: flex; gap: 0;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    max-width: 100%;
+    border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 2;
+    background: var(--panel);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+  .tab {
+    flex: 1 0 auto;
+    white-space: nowrap;
+    padding: 9px 8px;
+    border: 0; border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--muted);
+    font-family: var(--font-display);
+    font-weight: 600; font-size: 13px;
+    cursor: pointer;
+    margin-bottom: -1px;
+  }
+  .tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+  .tab:hover { color: var(--fg); }
+  .pane { padding: 12px; }
+
+  /* layer plans */
+  .layer-stepper { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  .layer-stepper .layer-value { font-family: var(--font-mono); font-size: 14px; min-width: 7ch; text-align: center; }
+  .layer-stepper .zoom { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+  .layer-stepper .zoom select { width: auto; padding: 3px 6px; }
+  .plan-scroll {
+    overflow: auto;
+    max-width: 100%;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+  }
+  #planCanvas { display: block; }
+  .legend { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .legend li { display: grid; grid-template-columns: 20px 14px 1fr auto; align-items: center; gap: 8px; }
+  .legend img { width: 20px; height: 20px; image-rendering: pixelated; display: block; }
+  .legend .sw { width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.25); }
+  .legend .n { font-family: var(--font-mono); color: var(--muted); }
+  .glyph-key { margin-top: 12px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .glyph-key b { color: var(--fg); font-weight: 500; }
+
+  /* materials */
+  .table-wrap { overflow: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500; }
+  td.num, th.num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  td.id { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+  td img { width: 20px; height: 20px; image-rendering: pixelated; display: block; }
+  tfoot td { font-weight: 600; border-bottom: 0; }
+
+  /* export */
+  .export-grid { display: grid; gap: 10px; }
+  .export-grid .field label { font-size: 12px; color: var(--muted); }
+  .export-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+  .note { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+  .help { font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 10px; margin-top: 6px; }
+  .help p { margin: 0 0 6px; }
+  .help code { font-family: var(--font-mono); font-size: 11px; background: var(--soft); padding: 1px 4px; border-radius: 3px; }
+  .export-status { font-size: 12px; min-height: 1.2em; }
+  .export-status.error { color: var(--danger); }
+
+  /* ---------- popover (swatch picker) ---------- */
+  .popover {
+    position: fixed;
+    z-index: 50;
+    width: min(460px, calc(100vw - 32px));
+    max-height: min(72vh, 560px);
+    display: flex; flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.22);
+  }
+  .popover-head { padding: 10px 12px 8px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
+  .popover-title-row { display: flex; align-items: center; gap: 8px; }
+  .popover-title-row .panel-title { flex: 1; }
+  .popover-body { overflow: auto; padding: 8px 12px 12px; }
+  .swatch-group-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 10px 0 6px; }
+  .swatch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 4px; }
+  .swatch {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    padding: 5px 3px 4px;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    background: none;
+    font-size: 11px; line-height: 1.2; text-align: center;
+    cursor: pointer;
+    color: var(--fg);
+  }
+  .swatch img { width: 48px; height: 48px; image-rendering: pixelated; border-radius: 4px; border: 1px solid var(--line); display: block; }
+  .swatch span { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .swatch:hover { background: var(--soft); }
+  .swatch[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .swatch[aria-pressed="true"] img { box-shadow: 0 0 0 2px var(--accent); }
+  .popover-empty { color: var(--muted); font-style: italic; padding: 12px 4px; }
+
+  /* ---------- confirm bar + toast ---------- */
+  .confirm {
+    position: fixed;
+    left: 50%; bottom: max(16px, env(safe-area-inset-bottom, 0px));
+    transform: translateX(-50%);
+    z-index: 60;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    width: max-content; max-width: calc(100vw - 32px);
+    padding: 10px 12px 10px 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.22);
+  }
+  .confirm-actions { display: flex; gap: 6px; margin-left: auto; }
+  .toast {
+    position: fixed;
+    left: max(16px, env(safe-area-inset-left, 0px)); bottom: max(16px, env(safe-area-inset-bottom, 0px));
+    z-index: 55;
+    padding: 8px 12px;
+    background: var(--fg); color: var(--bg);
+    border-radius: var(--radius);
+    font-size: 12px;
+    max-width: calc(100vw - 32px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  }
+  .toast.error { background: var(--danger); color: #fff; }
+  .toast { display: flex; align-items: center; gap: 12px; }
+  .toast-action { font: inherit; font-weight: 600; color: inherit; background: none; border: 1px solid currentColor; border-radius: var(--radius); padding: 2px 8px; cursor: pointer; opacity: 0.9; }
+  .toast-action:hover { opacity: 1; }
+
+  /* ---------- presets ---------- */
+  .preset-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .preset {
+    flex: 1; min-width: 0;
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 8px;
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer;
+  }
+  .preset:hover { border-color: var(--accent); background: var(--soft); }
+  .preset-icons { display: flex; gap: 1px; flex: none; }
+  .preset-icons img { image-rendering: pixelated; }
+  .preset-text { display: grid; min-width: 0; }
+  .preset-name { font-weight: 600; font-size: 13px; }
+  .preset-meta { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .preset-save { display: flex; gap: 6px; margin: 4px 0 2px; }
+  .preset-save input { flex: 1; min-width: 0; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .btn, .chip, .matbtn, .swatch, .obj, .tab { transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease; }
+    .popover, .confirm, .toast { animation: pop-in 140ms ease-out; }
+    @keyframes pop-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    .confirm { animation-name: pop-in-center; }
+    @keyframes pop-in-center { from { opacity: 0; transform: translate(-50%, 4px); } to { opacity: 1; transform: translate(-50%, 0); } }
+  }
+
+  /* ---------- phone / narrow ---------- */
+  @media (max-width: 900px) {
+    .work { display: flex; flex-direction: column; }
+    .viewport-wrap { order: -1; min-height: 50vh; flex: none; }
+    .panel { overflow: visible; }
+    .tabs { position: static; }
+    .topbar-actions { margin-left: 0; }
+    #designName { flex-basis: 100%; }
+    .hud input[type="range"] { width: 110px; }
+    .work { max-width: 100%; }
+    .obj { grid-template-columns: 22px minmax(0, 1fr) auto; }
+    .obj .obj-meta { max-width: 10ch; }
+    .legend li { grid-template-columns: 20px 14px minmax(0, 1fr) auto; }
+    .legend li > span:nth-child(3) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fields { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+
+<div id="app">
+  <header class="topbar">
+    <h1 class="brand">
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M3 12 12 4l9 8"/><path d="M6 10.5V20h12v-9.5"/><path d="M10 20v-5h4v5"/></svg>
+      Rafter <small>Minecraft roof designer</small>
+    </h1>
+    <label for="designName" class="sr-only">Design name</label>
+    <input type="text" id="designName" placeholder="Design name" autocomplete="off" spellcheck="false">
+    <div class="palette" id="paletteBar" aria-label="Palette: materials used in this design"></div>
+    <div class="topbar-actions">
+      <button class="btn" id="btnPresets" aria-haspopup="dialog" aria-expanded="false" title="Apply or save a style preset">Presets</button>
+      <button class="btn icon" id="btnUndo" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>&#x21B6;</button>
+      <button class="btn icon" id="btnRedo" title="Redo (Ctrl+Y)" aria-label="Redo" disabled>&#x21B7;</button>
+      <button class="btn" id="btnSave">Save JSON</button>
+      <button class="btn" id="btnLoad">Load JSON</button>
+      <input type="file" id="fileLoad" accept=".json,application/json" hidden>
+      <button class="btn" id="btnReset">Reset to sample</button>
+    </div>
+  </header>
+
+  <main class="work">
+    <!-- LEFT: objects + properties -->
+    <aside class="panel" id="leftPanel" aria-label="Objects and properties">
+      <section class="section" id="objectsSection">
+        <div class="section-head">
+          <h2>Objects</h2>
+          <span class="muted mono" id="objectCount"></span>
+        </div>
+        <div class="add-row">
+          <button class="btn small" id="btnAddBox">+ Box</button>
+          <button class="btn small" id="btnAddPillar">+ Pillar</button>
+          <button class="btn small" id="btnAddSegment">+ Wall segment</button>
+          <button class="btn small" id="btnAutoDetails" title="Add trims, corner posts, beams, a foundation course and windows to every box">Auto details</button>
+        </div>
+        <ul class="obj-list" id="objectList" aria-label="Objects"></ul>
+      </section>
+      <section class="section" id="propsSection">
+        <div class="props-head">
+          <h2 id="propsTitle">Properties</h2>
+          <span class="id" id="propsId"></span>
+          <span class="spacer"></span>
+        </div>
+        <p class="empty" id="propsEmpty">Select an object in the list or click it in the 3D view. Drag to move it; drag the square handles to resize and the round one to rotate (or press R).</p>
+        <div id="propsBody"></div>
+      </section>
+    </aside>
+
+    <!-- CENTRE: 3D viewport -->
+    <section class="viewport-wrap" aria-label="3D view">
+      <div id="viewport"></div>
+      <div class="viewport-error" id="viewportError" hidden>
+        <p>The 3D view could not start (three.js failed to load). Plans, materials and export still work. <span id="viewportErrorMsg" class="mono"></span></p>
+      </div>
+      <div class="viewport-overlay">
+        <div class="hud">
+          <label for="sliceSlider">Show up to layer <output id="sliceValue" for="sliceSlider">0</output></label>
+          <input type="range" id="sliceSlider" min="0" max="0" value="0" step="1">
+        </div>
+        <div class="hud check">
+          <input type="checkbox" id="sliceToggle" checked>
+          <label for="sliceToggle">Slice 3D view to this layer</label>
+        </div>
+        <button class="btn" id="btnFrame" title="Fit the whole design in view">Frame</button>
+      </div>
+      <div class="viewport-bottom">
+        <div class="status" id="status" aria-live="polite"></div>
+        <p class="tool-hint" id="toolHint" hidden></p>
+        <div class="toolbar" id="toolbar" role="toolbar" aria-label="Edit tools">
+          <div class="seg hud" id="toolSeg">
+            <button type="button" data-tool="select" aria-pressed="true" title="Select, move, resize and rotate objects (V)">Select</button>
+            <button type="button" data-tool="paint" aria-pressed="false" title="Paint walls, roofs or single blocks (B)">Paint</button>
+            <button type="button" data-tool="place" aria-pressed="false" title="Place single blocks (P)">Place</button>
+            <button type="button" data-tool="erase" aria-pressed="false" title="Remove single blocks (E)">Erase</button>
+          </div>
+          <button type="button" class="matbtn hud brush" id="brushBtn" aria-haspopup="dialog" aria-expanded="false" hidden>
+            <img alt="" width="28" height="28"><span class="mat-name"></span><span class="caret">▼</span>
+          </button>
+          <div class="seg hud" id="scopeSeg" hidden>
+            <button type="button" data-scope="part" aria-pressed="true" title="Repaint the whole wall, roof, trim, post… the block belongs to">Whole part</button>
+            <button type="button" data-scope="block" aria-pressed="false" title="Repaint only the block you click">One block</button>
+          </div>
+          <div class="seg hud" id="shapeSeg" hidden>
+            <button type="button" data-shape="full" aria-pressed="true">Block</button>
+            <button type="button" data-shape="slab" aria-pressed="false">Slab</button>
+            <button type="button" data-shape="stair" aria-pressed="false">Stairs</button>
+          </div>
+          <button type="button" class="btn small" id="btnClearEdits" hidden title="Remove every hand-placed, painted and erased block">Clear edits</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT: tabs -->
+    <aside class="panel" id="rightPanel" aria-label="Plans, materials and export">
+      <div class="tabs" role="tablist" aria-label="Right panel">
+        <button class="tab" role="tab" id="tabPlans" aria-selected="true" aria-controls="panePlans">Layer plans</button>
+        <button class="tab" role="tab" id="tabMaterials" aria-selected="false" aria-controls="paneMaterials" tabindex="-1">Materials</button>
+        <button class="tab" role="tab" id="tabExport" aria-selected="false" aria-controls="paneExport" tabindex="-1">Export</button>
+      </div>
+
+      <div class="pane" id="panePlans" role="tabpanel" aria-labelledby="tabPlans">
+        <div class="layer-stepper">
+          <button class="btn icon" id="layerDown" aria-label="Layer below" title="Layer below">&#x25BC;</button>
+          <span class="layer-value">y = <output id="layerValue" for="sliceSlider">0</output></span>
+          <button class="btn icon" id="layerUp" aria-label="Layer above" title="Layer above">&#x25B2;</button>
+          <span class="muted mono" id="layerOf"></span>
+          <div class="zoom">
+            <label for="planZoom" class="muted">Cell</label>
+            <select id="planZoom">
+              <option value="auto" selected>Auto</option>
+              <option value="14">Small</option>
+              <option value="22">Medium</option>
+              <option value="32">Large</option>
+            </select>
+          </div>
+        </div>
+        <div class="plan-scroll" id="planScroll">
+          <canvas id="planCanvas" role="img" aria-label="Layer plan, north up"></canvas>
+        </div>
+        <ul class="legend" id="planLegend" aria-label="Legend for this layer"></ul>
+        <p class="glyph-key"><b>Key:</b> solid = full block · hatched = slab (bar on top = upper slab) · arrow = stairs pointing uphill (hollow = upside-down) · dot = outer corner, ring = inner corner · small square = wall · faded = layer below.</p>
+      </div>
+
+      <div class="pane" id="paneMaterials" role="tabpanel" aria-labelledby="tabMaterials" hidden>
+        <div class="table-wrap">
+          <table id="materialsTable">
+            <thead><tr><th></th><th>Material</th><th class="num">Count</th></tr></thead>
+            <tbody id="materialsBody"></tbody>
+            <tfoot><tr><td></td><td>Total</td><td class="num" id="materialsTotal">0</td></tr></tfoot>
+          </table>
+        </div>
+        <p class="note">Counts group by block id (slabs and stairs of a material are separate rows). One stack = 64.</p>
+      </div>
+
+      <div class="pane" id="paneExport" role="tabpanel" aria-labelledby="tabExport" hidden>
+        <div class="export-grid">
+          <div class="field">
+            <label for="authorName">Author</label>
+            <input type="text" id="authorName" placeholder="Your name (stored in the schematic)" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="dataVersion">Minecraft data version</label>
+            <input type="number" id="dataVersion" min="100" step="1" list="dataVersions" inputmode="numeric">
+            <datalist id="dataVersions">
+              <option value="5023">26.3</option>
+              <option value="4440">1.21.8</option>
+              <option value="4189">1.21.4</option>
+              <option value="3955">1.21.1</option>
+            </datalist>
+            <span class="hint">26.3 = 5023, 1.21.8 = 4440, 1.21.4 = 4189, 1.21.1 = 3955. Litematica only needs it to be close; block states are stored by name.</span>
+          </div>
+          <div class="export-buttons">
+            <button class="btn primary" id="btnLitematic">Download .litematic</button>
+            <button class="btn" id="btnSchem">Download .schem</button>
+          </div>
+          <div class="export-status" id="exportStatus" aria-live="polite"></div>
+          <p class="note">If the download does not start you are in an embedded preview; open the hosted copy of Rafter.</p>
+          <p class="note">In the embedded preview, schematics download as a .zip; on the hosted site they download directly.</p>
+        </div>
+        <div class="help">
+          <p><b>.litematic</b> — for the Litematica mod (Fabric). Drop the file into <code>.minecraft/schematics</code>, then load it from the Litematica menu and place it as a schematic to build against, or paste it with Easy Place / a creative-mode paste.</p>
+          <p><b>.schem</b> — Sponge v2 schematic for WorldEdit / FAWE. Put it in <code>plugins/WorldEdit/schematics</code> (or <code>config/worldedit/schematics</code>) and run <code>//schem load &lt;name&gt;</code> then <code>//paste</code>.</p>
+          <p>The schematic origin is the lowest north-west corner of the design; roof stairs carry their facing and corner shapes so they paste exactly as drawn.</p>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Swatch picker popover -->
+  <div class="popover" id="popover" role="dialog" aria-modal="false" aria-labelledby="popoverTitle" hidden>
+    <div class="popover-head">
+      <div class="popover-title-row">
+        <span class="panel-title" id="popoverTitle">Choose material</span>
+        <button class="btn icon small" id="popoverClose" aria-label="Close">&#x2715;</button>
+      </div>
+      <label for="popoverSearch" class="sr-only">Search materials</label>
+      <input type="search" id="popoverSearch" placeholder="Search materials…" autocomplete="off">
+    </div>
+    <div class="popover-body" id="popoverBody"></div>
+  </div>
+
+  <!-- In-page confirmation -->
+  <div class="confirm" id="confirmBar" role="alertdialog" aria-labelledby="confirmText" hidden>
+    <span id="confirmText"></span>
+    <div class="confirm-actions">
+      <button class="btn" id="confirmCancel">Cancel</button>
+      <button class="btn danger" id="confirmYes">Delete</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</div>
+
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+<script type="module" src="app.js"></script>
+
+</body>
+</html>

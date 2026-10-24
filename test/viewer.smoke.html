@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rafter viewer smoke test</title>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<style>
+  :root { --viewport-bg: #e5e1d8; --accent: #a4511f; --muted: #6d675d; --line: #b9b4aa; --fg: #1f1d1a; }
+  @media (prefers-color-scheme: dark) { :root { --viewport-bg: #1c1f24; --accent: #d9814a; --muted: #9a948a; --line: #3a3f46; --fg: #e8e4dc; } body { background: #15171a; color: #e8e4dc; } }
+  body { margin: 0; font: 14px/1.4 system-ui, sans-serif; color: var(--fg); }
+  #view { height: 62vh; min-height: 360px; position: relative; }
+  .bar { display: flex; gap: 12px; align-items: center; padding: 8px 16px; flex-wrap: wrap; }
+  .legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; padding: 0 16px 16px; }
+  .legend div { border: 1px solid var(--line); padding: 6px; border-radius: 6px; font-size: 12px; }
+  .legend canvas { display: block; margin: 4px auto; image-rendering: pixelated; }
+  .fams { display: flex; gap: 10px; padding: 0 16px 16px; flex-wrap: wrap; }
+  .fams figure { margin: 0; text-align: center; font-size: 11px; }
+  .fams img, .fams canvas { image-rendering: pixelated; display: block; margin: 0 auto 2px; }
+  pre { margin: 0 16px 16px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; max-height: 140px; overflow: auto; font-size: 12px; }
+  code { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<div id="view"></div>
+<div class="bar">
+  <button id="frame">Frame</button>
+  <label>Slice up to layer <input id="slice" type="range" min="-1" max="3" value="3"> <span id="sliceVal">off</span></label>
+  <button id="sel">Select box b1</button>
+  <button id="desel">Clear selection</button>
+  <span>Layout: rows of stairs, z = 4 (N), 6 (E), 8 (S), 10 (W); columns x = 0..8 = straight, outer_left, outer_right, inner_left, inner_right (bottom half), x = 12..20 same shapes half = top. Row z = 0: full cubes. Row z = 2: slab bottom, slab top, walls (N+S arms, E arm only, tall arms). Design objects (proxies / handles) at z = 14..19.</span>
+</div>
+<h3 style="margin:0 16px 6px">Expected tall quarters (SPEC): dark = full height, light = half height. Columns: shapes; rows: facing N / E / S / W</h3>
+<div class="legend" id="legend"></div>
+<h3 style="margin:0 16px 6px">Family textures from blocks.js (swatch, mini-cube icon)</h3>
+<div class="fams" id="fams"></div>
+<pre id="log">callbacks log…</pre>
+
+<script type="module">
+import * as THREE from 'three';
+import { Viewer, STAIR_SHAPES, DIRS, tallQuarters } from '../viewer3d.js';
+import { familyTexture, swatchDataURL, familyIcon, patternNames } from '../textures.js';
+import { FAMILIES } from '../blocks.js';
+
+const log = document.getElementById('log');
+const say = (...a) => { log.textContent = a.map((x) => typeof x === 'string' ? x : JSON.stringify(x)).join(' ') + '\n' + log.textContent.slice(0, 2000); };
+
+// ---- a hand-made grid with two fake families (exercise the fallback path) + real ones --------
+const FAKE = { fakeA: '#6b4a2b', fakeB: '#7a7a7a' };
+const blocks = new Map();
+const put = (x, y, z, kind, mat, props = {}) => blocks.set(`${x},${y},${z}`, { id: 'smoke:' + kind, kind, props, mat, role: 'roof', color: FAKE[mat] || (FAMILIES[mat] && FAMILIES[mat].color) || '#888' });
+
+// row z=0: full cubes, fake families then real ones
+let cx = 0;
+for (const m of ['fakeA', 'fakeB']) put(cx++, 0, 0, 'full', m);
+const realKeys = Object.keys(FAMILIES).filter((k) => ['spruce', 'stone_bricks', 'oak_log', 'bricks', 'cobblestone', 'deepslate_tiles', 'cut_copper', 'prismarine', 'quartz', 'purpur', 'mud_bricks', 'sandstone', 'red_wool', 'white_concrete', 'terracotta'].includes(k)).slice(0, 14);
+for (const m of realKeys) put(++cx, 0, 0, 'full', m);
+// row z=2: slabs + walls
+put(0, 0, 2, 'slab', 'fakeA', { type: 'bottom', waterlogged: 'false' });
+put(1, 0, 2, 'slab', 'fakeB', { type: 'top', waterlogged: 'false' });
+put(3, 0, 2, 'wall', 'fakeB', { up: 'true', north: 'low', south: 'low', east: 'none', west: 'none', waterlogged: 'false' });
+put(4, 0, 2, 'wall', 'fakeB', { up: 'true', north: 'none', south: 'none', east: 'low', west: 'none', waterlogged: 'false' });
+put(5, 0, 2, 'wall', 'fakeB', { up: 'true', north: 'none', south: 'none', east: 'tall', west: 'tall', waterlogged: 'false' });
+// also a 3-layer stack to test slicing
+for (let y = 0; y < 3; y++) put(8, y, 2, 'full', y % 2 ? 'fakeA' : 'fakeB');
+// stairs: rows per facing, columns per shape; bottom half at x=0.., top half at x=12..
+const facingRows = { north: 4, east: 6, south: 8, west: 10 };
+STAIR_SHAPES.forEach((shape, i) => {
+  for (const f of DIRS) {
+    put(i * 2, 0, facingRows[f], 'stair', 'fakeA', { facing: f, half: 'bottom', shape, waterlogged: 'false' });
+    put(12 + i * 2, 0, facingRows[f], 'stair', 'fakeB', { facing: f, half: 'top', shape, waterlogged: 'false' });
+  }
+});
+const grid = { blocks, min: { x: 0, y: 0, z: 0 }, max: { x: 20, y: 2, z: 19 }, surface: new Map() };
+
+// ---- design with one box, one pillar, one segment (proxies, outlines, handles, drags) ------
+const design = {
+  version: 1, name: 'smoke', boxes: [{ id: 'b1', name: 'Box', x: 0, z: 14, w: 5, d: 4, baseY: 0, wallH: 2, walls: true, floor: false, wallMaterial: 'fakeA',
+    roof: { type: 'gable', axis: 'x', rise: 1, overhang: 1, ridgeCap: 'block', soffit: false, material: 'fakeA' } }],
+  pillars: [{ id: 'p1', x: 7, z: 14, baseY: 0, h: 3, material: 'fakeB' }],
+  segments: [{ id: 's1', x0: 9, z0: 14, x1: 14, z1: 14, baseY: 0, h: 2, material: 'fakeB' }],
+};
+// put real blocks under the design objects so the proxies have something to sit on
+for (let x = 0; x < 5; x++) for (let z = 14; z < 18; z++) if (x === 0 || x === 4 || z === 14 || z === 17) for (let y = 0; y < 2; y++) put(x, y, z, 'full', 'fakeA');
+for (let y = 0; y < 3; y++) put(7, y, 14, 'full', 'fakeB');
+for (let x = 9; x <= 14; x++) for (let y = 0; y < 2; y++) put(x, y, 14, 'full', 'fakeB');
+
+const viewer = new Viewer(document.getElementById('view'), {
+  onSelect: (id) => { say('onSelect', id); viewer.setSelection(id); },
+  onMove: (id, patch) => {
+    say('onMove', id, patch);
+    const o = [...design.boxes, ...design.pillars, ...design.segments].find((x) => x.id === id);
+    Object.assign(o, patch); viewer.setDesign(design);
+  },
+  onResize: (id, patch) => { say('onResize', id, patch); Object.assign(design.boxes.find((b) => b.id === id), patch); viewer.setDesign(design); },
+  onCommit: () => say('onCommit'),
+});
+viewer.setGrid(grid);
+viewer.setDesign(design);
+viewer.frameAll();
+
+// 3D text labels (sprites) so the row/column layout can be read in the scene
+function label(text, x, y, z, scale = 1.6) {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 64;
+  const g = c.getContext('2d'); g.fillStyle = 'rgba(0,0,0,0.55)'; g.fillRect(0, 0, 256, 64);
+  g.fillStyle = '#fff'; g.font = 'bold 30px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 128, 32);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, depthTest: false }));
+  s.position.set(x, y, z); s.scale.set(scale * 2, scale * 0.5, 1); s.renderOrder = 20;
+  viewer.scene.add(s);
+}
+STAIR_SHAPES.forEach((s, i) => { label(s, i * 2 + 0.5, 1.6, 3); label(s + ' TOP', 12 + i * 2 + 0.5, 1.6, 3); });
+for (const f of DIRS) label('facing ' + f, -2.5, 1.0, facingRows[f] + 0.5);
+label('cubes', -2, 1, 0.5); label('slabs / walls', -2.5, 1, 2.5); label('design objects', -3, 1, 15.5);
+viewer.requestRender();
+
+// ---- controls ----
+document.getElementById('frame').onclick = () => viewer.frameAll();
+const slice = document.getElementById('slice'), sliceVal = document.getElementById('sliceVal');
+slice.oninput = () => { const v = +slice.value; const on = v < 3; viewer.setSliceY(on ? v : null); sliceVal.textContent = on ? String(v) : 'off'; };
+document.getElementById('sel').onclick = () => viewer.setSelection('b1');
+document.getElementById('desel').onclick = () => viewer.setSelection(null);
+
+// ---- expected tall-quarter legend (2D, north up) ----
+const legend = document.getElementById('legend');
+for (const f of DIRS) for (const s of STAIR_SHAPES) {
+  const tall = tallQuarters(s, f);
+  const d = document.createElement('div');
+  d.innerHTML = `<b>${s}</b> facing ${f}<br><small>tall: ${tall.join(', ')}</small>`;
+  const c = document.createElement('canvas'); c.width = c.height = 48;
+  const g = c.getContext('2d');
+  const q = { NW: [0, 0], NE: [1, 0], SW: [0, 1], SE: [1, 1] };
+  for (const [name, [qx, qz]] of Object.entries(q)) { g.fillStyle = tall.includes(name) ? '#5a3a1a' : '#d8b98c'; g.fillRect(qx * 24, qz * 24, 24, 24); }
+  g.strokeStyle = '#000'; g.strokeRect(0.5, 0.5, 47, 47);
+  g.fillStyle = '#fff'; g.font = '10px sans-serif'; g.fillText('N', 20, 10);
+  d.appendChild(c); legend.appendChild(d);
+}
+
+// ---- family swatches ----
+const fams = document.getElementById('fams');
+const byPattern = new Map();
+for (const [k, f] of Object.entries(FAMILIES)) if (!byPattern.has(f.pattern)) byPattern.set(f.pattern, k);
+for (const p of patternNames) {
+  const k = byPattern.get(p); if (!k) continue;
+  const fig = document.createElement('figure');
+  const img = new Image(); img.src = swatchDataURL(k); img.width = img.height = 64;
+  fig.append(img, familyIcon(k, 32), document.createTextNode(`${p} (${k})`));
+  fams.appendChild(fig);
+}
+say('ready: ' + blocks.size + ' blocks');
+</script>
+</body>
+</html>
