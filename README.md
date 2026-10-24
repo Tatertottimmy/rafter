@@ -94,6 +94,11 @@ node --test test/*.test.mjs
 
 Open `test/viewer.smoke.html` from a local static server to eyeball every stair shape and texture.
 
+## Support
+
+Rafter is free. If it saved you some building time and you'd like to say thanks, you can
+[buy me a coffee on Ko-fi](https://ko-fi.com/tatertottimmy). Totally optional.
+
 ## License
 
 MIT: free to use, copy, change and share, for any purpose, including commercial. See [LICENSE](LICENSE).

@@ -30,7 +30,7 @@ const ROOF_HINT = 'Any block works. Blocks without slabs or stairs build a stepp
 const DIR_OPTIONS = [['north', 'North'], ['south', 'South'], ['east', 'East'], ['west', 'West']];
 const KIND_LABEL = { full: 'block', slab: 'slab', stair: 'stairs', wall: 'wall', pane: 'pane' };
 // Tip jar link (Ko-fi, Buy Me a Coffee, ...). Empty = the support line stays hidden.
-const SUPPORT_URL = '';
+const SUPPORT_URL = 'https://ko-fi.com/tatertottimmy';
 
 // ------------------------------------------------------------------ state
 const state = {
