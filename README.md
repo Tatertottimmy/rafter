@@ -67,7 +67,8 @@ No build step is needed to develop: serve the folder with any static web server
   "One block" mode. **Place** (P) puts a block, slab or stairs against the face you click or on the
   ground; stairs face the way you look, slabs go top or bottom by where you click. **Erase** (E)
   removes blocks. Shift+drag paints, places or erases a stroke; Alt+click picks up a block's
-  material. The layer plan takes clicks too, on the current layer. Edits on a box move and rotate
+  material. The layer plan takes clicks too, on the current layer. In **Select**, click a block
+  you placed to select it (Shift+click for more); Delete removes them and R turns stairs. Edits on a box move and rotate
   with it; "Clear edits" removes them all.
 - **Texture**: per box, mix a share of look-alike blocks into the walls and roof (mossy and
   cracked bricks, nearby wood tones, ...) as patches, scatter, grime (heavier low down) or

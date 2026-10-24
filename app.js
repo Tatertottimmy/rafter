@@ -47,6 +47,7 @@ const state = {
   lastChange: { key: null, t: 0 },
   propsFor: null, // "kind:id" the editor DOM was built for
   tool: 'select',   // select | paint | place | erase
+  selectedBlocks: [], // world cells [x,y,z] of selected hand-placed blocks (Select tool)
   brush: 'stone_bricks',
   paintScope: 'part', // part = the whole wall/roof/trim the block belongs to; block = one block
   shape: 'full',
@@ -238,6 +239,7 @@ function rebuildNow(structural) {
     if (doStructural && !state.dragging) viewer.setDesign(state.design);
     viewer.setGrid(state.grid);
     applySlice();
+    syncBlockSelection();
   }
   renderSliceControls();
   renderPlan();
@@ -259,6 +261,7 @@ async function initViewer() {
       onResize: (id, patch) => liveEdit(id, patch),
       onRotate: (id, patch) => { state.rotAnchor = null; liveEdit(id, patch); },
       onBlockClick: (info, mods) => blockAction(info, mods),
+      onSelectBlock: (cell, mods) => selectBlock(cell, mods),
       onStrokeEnd: () => flushRebuild(),
       onCommit: () => {
         state.dragging = false;
@@ -306,7 +309,8 @@ function applySlice() {
 // ------------------------------------------------------------------ selection
 function select(id, opts = {}) {
   if (id && !findObject(id)) id = null;
-  const changed = id !== state.selectedId;
+  if (!opts.keepBlocks && state.selectedBlocks.length) { state.selectedBlocks = []; if (viewer) viewer.setSelectedBlocks([]); }
+  const changed = id !== state.selectedId || opts.keepBlocks;
   state.selectedId = id;
   if (viewer && !opts.fromViewer) viewer.setSelection(id);
   renderObjectList();
@@ -509,6 +513,7 @@ const fieldId = (field) => 'prop-' + field.path.join('-');
 function renderProps(valuesOnly = false) {
   const f = findObject(state.selectedId);
   const body = $('propsBody');
+  if (!f && state.selectedBlocks.length) { renderBlockProps(); return; }
   if (!f) {
     body.replaceChildren();
     body.hidden = true;
@@ -702,6 +707,76 @@ function addSegment() {
   select(id);
   toast('Added wall segment ' + id);
 }
+// ------------------------------------------------------------------ selected hand-placed blocks
+const cellKey = (c) => c.join(',');
+/** The place edit behind a world cell, if the block there was hand-placed. */
+function placedEdit(cell) {
+  const ex = findEdit(...cell);
+  return ex && ex.edit.shape !== 'erase' && ex.edit.shape !== 'paint' ? ex : null;
+}
+function selectBlock(cell, { add = false } = {}) {
+  if (!placedEdit(cell)) return;
+  let list = add ? state.selectedBlocks.slice() : [];
+  const i = list.findIndex((c) => cellKey(c) === cellKey(cell));
+  if (i >= 0) list.splice(i, 1); else list.push(cell);
+  state.selectedBlocks = list;
+  if (viewer) viewer.setSelectedBlocks(list);
+  select(null, { keepBlocks: true });
+}
+/** Drop selections whose block is gone (undo, erase, its box moved) and refresh outlines. */
+function syncBlockSelection() {
+  if (!state.selectedBlocks.length) return;
+  const kept = state.selectedBlocks.filter((c) => placedEdit(c));
+  const changed = kept.length !== state.selectedBlocks.length;
+  state.selectedBlocks = kept;
+  if (viewer) viewer.setSelectedBlocks(kept);
+  if (changed && !state.selectedId) renderProps();
+}
+function blockLabel(cell) {
+  const b = state.grid && state.grid.blocks.get(cellKey(cell));
+  const ex = placedEdit(cell);
+  const shape = ex ? ({ slab: 'slab', stair: 'stairs' }[ex.edit.shape] || '') : ''; // full blocks: the name alone
+  return ((b ? famName(b.mat) : '?') + ' ' + shape).trim();
+}
+function renderBlockProps() {
+  const body = $('propsBody');
+  const cells = state.selectedBlocks;
+  state.propsFor = 'blocks:' + cells.map(cellKey).join('|');
+  $('propsEmpty').hidden = true;
+  body.hidden = false;
+  $('propsTitle').textContent = cells.length === 1 ? 'Placed block' : cells.length + ' placed blocks';
+  $('propsId').textContent = '';
+  const rows = cells.slice(0, 12).map((c) => h('li', {},
+    iconEl(state.grid.blocks.get(cellKey(c)).mat, 20), h('span', { text: blockLabel(c) }), h('span', { class: 'n mono', text: c.join(', ') })));
+  const anyStair = cells.some((c) => { const ex = placedEdit(c); return ex && ex.edit.shape === 'stair'; });
+  body.replaceChildren(
+    h('ul', { class: 'legend block-list' }, rows, cells.length > 12 ? h('li', { class: 'empty', text: '+ ' + (cells.length - 12) + ' more' }) : null),
+    h('p', { class: 'hint', text: 'Shift+click more placed blocks to add them. Delete removes them' + (anyStair ? ', R turns stairs.' : '.') }),
+    h('div', { class: 'props-actions' },
+      anyStair ? h('button', { class: 'btn small', type: 'button', id: 'block-rotate', text: 'Turn stairs', onclick: () => rotateSelectedBlocks() }) : null,
+      h('button', { class: 'btn danger small', type: 'button', id: 'block-delete', text: cells.length === 1 ? 'Delete' : 'Delete ' + cells.length, onclick: () => deleteSelectedBlocks() })));
+}
+function deleteSelectedBlocks() {
+  const cells = state.selectedBlocks.filter((c) => placedEdit(c));
+  if (!cells.length) return;
+  beginChange(null);
+  for (const c of cells) { const ex = placedEdit(c); if (ex) ex.list.splice(ex.index, 1); }
+  state.selectedBlocks = [];
+  if (viewer) viewer.setSelectedBlocks([]);
+  afterChange();
+  renderProps();
+  updateToolbar();
+  toast(cells.length === 1 ? 'Deleted placed block' : 'Deleted ' + cells.length + ' placed blocks', false, { label: 'Undo', run: undo });
+}
+function rotateSelectedBlocks() {
+  const turn = { north: 'east', east: 'south', south: 'west', west: 'north' };
+  const stairs = state.selectedBlocks.map(placedEdit).filter((ex) => ex && ex.edit.shape === 'stair');
+  if (!stairs.length) return;
+  beginChange('turn-blocks');
+  for (const ex of stairs) ex.edit.facing = turn[ex.edit.facing] || 'north';
+  afterChange();
+}
+
 function requestDelete(id) {
   deleteObject(id);
 }
@@ -725,6 +800,7 @@ const TOOL_HINTS = {
 const STAIR_ARROWS = { north: '↑', east: '→', south: '↓', west: '←' };
 function setTool(tool) {
   state.tool = tool;
+  if (tool !== 'select' && state.selectedBlocks.length) select(null);
   if (viewer) viewer.setTool(tool, { shape: state.shape });
   updateToolbar();
   $('planCanvas').classList.toggle('tool', tool !== 'select');
@@ -1483,6 +1559,8 @@ function onKeyDown(e) {
   if (mod && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
   if (mod && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
   if (mod) return;
+  if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedBlocks.length && !state.selectedId) { e.preventDefault(); deleteSelectedBlocks(); return; }
+  if (k === 'r' && state.selectedBlocks.length && !state.selectedId && state.tool === 'select') { e.preventDefault(); rotateSelectedBlocks(); return; }
   if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedId) { e.preventDefault(); requestDelete(state.selectedId); return; }
   if (k === 'r' && state.tool === 'place' && state.shape === 'stair') {
     e.preventDefault();
@@ -1504,7 +1582,7 @@ function onKeyDown(e) {
     return;
   }
   if (e.key === 'Escape' && state.tool !== 'select') { setTool('select'); return; }
-  if (e.key === 'Escape' && state.selectedId) select(null);
+  if (e.key === 'Escape' && (state.selectedId || state.selectedBlocks.length)) select(null);
 }
 
 // ------------------------------------------------------------------ wiring

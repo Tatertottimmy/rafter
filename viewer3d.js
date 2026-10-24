@@ -250,7 +250,8 @@ export class Viewer {
     this.tool = 'select';       // select | paint | place | erase
     this.toolOpts = {};
     this._hoverGroup = new THREE.Group();
-    this.scene.add(this._hoverGroup);
+    this._blockSelGroup = new THREE.Group(); // outlines of selected hand-placed blocks
+    this.scene.add(this._hoverGroup, this._blockSelGroup);
     this._hoverKey = null;
     this._hoverEvt = null;
     this._hoverRaf = 0;
@@ -436,6 +437,34 @@ export class Viewer {
     const gp = this._planePoint(e, y);
     if (!gp) return null;
     return { cell: null, place: [Math.floor(gp.x), y, Math.floor(gp.z)], normal: [0, 1, 0], half: 'bottom', facing, ground: true };
+  }
+
+  /** Outline these world cells as the selected hand-placed blocks. */
+  setSelectedBlocks(cells) {
+    this._clearGroup(this._blockSelGroup);
+    const color = new THREE.Color(cssVar(this.container, '--accent', '#d9814a'));
+    const mat = new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true });
+    const fillMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, depthWrite: false });
+    const edges = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.04, 1.04, 1.04));
+    const box = new THREE.BoxGeometry(1.03, 1.03, 1.03);
+    for (const [x, y, z] of cells || []) {
+      const line = new THREE.LineSegments(edges, mat);
+      line.position.set(x + 0.5, y + 0.5, z + 0.5);
+      line.renderOrder = 21;
+      const fill = new THREE.Mesh(box, fillMat);
+      fill.position.copy(line.position);
+      this._blockSelGroup.add(line, fill);
+    }
+    this.requestRender();
+  }
+
+  /** World cell of the hand-placed block under the pointer, or null. */
+  _placedAt(e) {
+    if (!this.grid || !this.grid.blocks) return null;
+    const info = this.pickBlock(e);
+    if (!info || !info.cell) return null;
+    const blk = this.grid.blocks.get(info.cell.join(','));
+    return blk && blk.role === 'placed' ? info.cell : null;
   }
 
   _setHover(info) {
@@ -755,6 +784,12 @@ export class Viewer {
       return;
     }
     const hit = this._pick(e);
+    if (!hit || (hit.type !== 'handle' && hit.type !== 'rotate')) {
+      // A hand-placed block is picked before the object it sits on; a click selects it,
+      // a drag still orbits.
+      const cell = this._placedAt(e);
+      if (cell) { this._down = { x: e.clientX, y: e.clientY, hit: null, block: cell }; return; }
+    }
     this._down = { x: e.clientX, y: e.clientY, hit };
     if (!hit) return; // let OrbitControls orbit
 
@@ -888,6 +923,10 @@ export class Viewer {
     }
     const dn = this._down;
     this._down = null;
+    if (dn && dn.block && e.type === 'pointerup') {
+      if (Math.hypot(e.clientX - dn.x, e.clientY - dn.y) < 4 && this.cb.onSelectBlock) this.cb.onSelectBlock(dn.block, { add: e.shiftKey || e.ctrlKey || e.metaKey });
+      return;
+    }
     if (dn && !dn.hit && e.type === 'pointerup') {
       const dist = Math.hypot(e.clientX - dn.x, e.clientY - dn.y);
       if (dist < 4) {
