@@ -82,4 +82,4 @@ Open `test/viewer.smoke.html` from a local static server to eyeball every stair 
 
 ## License
 
-GPL-3.0. See [LICENSE](LICENSE).
+MIT: free to use, copy, change and share, for any purpose, including commercial. See [LICENSE](LICENSE).
