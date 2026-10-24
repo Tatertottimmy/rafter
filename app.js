@@ -262,6 +262,8 @@ async function initViewer() {
       onRotate: (id, patch) => { state.rotAnchor = null; liveEdit(id, patch); },
       onBlockClick: (info, mods) => blockAction(info, mods),
       onSelectBlock: (cell, mods) => selectBlock(cell, mods),
+      onMoveBlocks: (dx, dz) => dragBlocks(dx, dz),
+      onMoveBlocksEnd: () => endBlockDrag(),
       onStrokeEnd: () => flushRebuild(),
       onCommit: () => {
         state.dragging = false;
@@ -732,11 +734,12 @@ function syncBlockSelection() {
   if (viewer) viewer.setSelectedBlocks(kept);
   if (changed && !state.selectedId) renderProps();
 }
+// Read from the edit itself, not the grid: right after a move the grid is not rebuilt yet.
 function blockLabel(cell) {
-  const b = state.grid && state.grid.blocks.get(cellKey(cell));
   const ex = placedEdit(cell);
-  const shape = ex ? ({ slab: 'slab', stair: 'stairs' }[ex.edit.shape] || '') : ''; // full blocks: the name alone
-  return ((b ? famName(b.mat) : '?') + ' ' + shape).trim();
+  if (!ex) return '?';
+  const shape = { slab: 'slab', stair: 'stairs' }[ex.edit.shape] || ''; // full blocks: the name alone
+  return (famName(ex.edit.mat) + ' ' + shape).trim();
 }
 function renderBlockProps() {
   const body = $('propsBody');
@@ -747,12 +750,14 @@ function renderBlockProps() {
   $('propsTitle').textContent = cells.length === 1 ? 'Placed block' : cells.length + ' placed blocks';
   $('propsId').textContent = '';
   const rows = cells.slice(0, 12).map((c) => h('li', {},
-    iconEl(state.grid.blocks.get(cellKey(c)).mat, 20), h('span', { text: blockLabel(c) }), h('span', { class: 'n mono', text: c.join(', ') })));
+    iconEl((placedEdit(c) || { edit: {} }).edit.mat, 20), h('span', { text: blockLabel(c) }), h('span', { class: 'n mono', text: c.join(', ') })));
   const anyStair = cells.some((c) => { const ex = placedEdit(c); return ex && ex.edit.shape === 'stair'; });
   body.replaceChildren(
     h('ul', { class: 'legend block-list' }, rows, cells.length > 12 ? h('li', { class: 'empty', text: '+ ' + (cells.length - 12) + ' more' }) : null),
-    h('p', { class: 'hint', text: 'Shift+click more placed blocks to add them. Delete removes them' + (anyStair ? ', R turns stairs.' : '.') }),
+    h('p', { class: 'hint', text: 'Drag to move, or use the arrow keys (Shift = 5) and Page Up / Page Down. Shift+click adds more blocks. Delete removes them' + (anyStair ? ', R turns stairs.' : '.') }),
     h('div', { class: 'props-actions' },
+      h('button', { class: 'btn small', type: 'button', id: 'block-up', text: 'Up ↑', title: 'Raise one block (Page Up)', onclick: () => nudgeBlocks(0, 1, 0) }),
+      h('button', { class: 'btn small', type: 'button', id: 'block-down', text: 'Down ↓', title: 'Lower one block (Page Down)', onclick: () => nudgeBlocks(0, -1, 0) }),
       anyStair ? h('button', { class: 'btn small', type: 'button', id: 'block-rotate', text: 'Turn stairs', onclick: () => rotateSelectedBlocks() }) : null,
       h('button', { class: 'btn danger small', type: 'button', id: 'block-delete', text: cells.length === 1 ? 'Delete' : 'Delete ' + cells.length, onclick: () => deleteSelectedBlocks() })));
 }
@@ -767,6 +772,50 @@ function deleteSelectedBlocks() {
   renderProps();
   updateToolbar();
   toast(cells.length === 1 ? 'Deleted placed block' : 'Deleted ' + cells.length + ' placed blocks', false, { label: 'Undo', run: undo });
+}
+/**
+ * Move the selected placed blocks by (dx, dy, dz). Refused (returns false) if a block would
+ * land on another hand-placed block, which would otherwise be overwritten, or leave the world.
+ */
+function shiftBlocks(dx, dy, dz, dryRun = false) {
+  const cells = state.selectedBlocks;
+  const exs = cells.map(placedEdit);
+  if (!cells.length || exs.some((ex) => !ex)) return false;
+  const sel = new Set(cells.map(cellKey));
+  const moved = cells.map(([x, y, z]) => [x + dx, y + dy, z + dz]);
+  for (const t of moved) {
+    if (t[1] < -64 || t[1] > 319) return false;
+    if (!sel.has(cellKey(t)) && findEdit(...t)) return false;
+  }
+  if (dryRun) return true;
+  for (const ex of exs) { ex.edit.x += dx; ex.edit.y += dy; ex.edit.z += dz; }
+  state.selectedBlocks = moved;
+  return true;
+}
+function nudgeBlocks(dx, dy, dz) {
+  if (!state.selectedBlocks.length) return;
+  if (!shiftBlocks(dx, dy, dz, true)) { toast('Something is already placed there', true); return; }
+  beginChange('nudge-blocks');
+  shiftBlocks(dx, dy, dz);
+  afterChange();
+  if (viewer) viewer.setSelectedBlocks(state.selectedBlocks);
+  renderBlockProps();
+}
+// Drag: the viewer reports the total offset since the press; apply the change since last time.
+let blockDrag = null;
+function dragBlocks(dx, dz) {
+  if (!blockDrag) { beginChange(null); blockDrag = { dx: 0, dz: 0 }; state.dragging = true; }
+  if (!shiftBlocks(dx - blockDrag.dx, 0, dz - blockDrag.dz)) return;
+  blockDrag.dx = dx; blockDrag.dz = dz;
+  persist();
+  scheduleRebuild(false);
+  if (viewer) viewer.setSelectedBlocks(state.selectedBlocks);
+}
+function endBlockDrag() {
+  blockDrag = null;
+  state.dragging = false;
+  afterChange();
+  renderBlockProps();
 }
 function rotateSelectedBlocks() {
   const turn = { north: 'east', east: 'south', south: 'west', west: 'north' };
@@ -1561,6 +1610,11 @@ function onKeyDown(e) {
   if (mod) return;
   if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedBlocks.length && !state.selectedId) { e.preventDefault(); deleteSelectedBlocks(); return; }
   if (k === 'r' && state.selectedBlocks.length && !state.selectedId && state.tool === 'select') { e.preventDefault(); rotateSelectedBlocks(); return; }
+  if (state.selectedBlocks.length && !state.selectedId) {
+    const step = e.shiftKey ? 5 : 1;
+    const mv = { ArrowUp: [0, 0, -step], ArrowDown: [0, 0, step], ArrowLeft: [-step, 0, 0], ArrowRight: [step, 0, 0], PageUp: [0, 1, 0], PageDown: [0, -1, 0] }[e.key];
+    if (mv) { e.preventDefault(); nudgeBlocks(...mv); return; }
+  }
   if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedId) { e.preventDefault(); requestDelete(state.selectedId); return; }
   if (k === 'r' && state.tool === 'place' && state.shape === 'stair') {
     e.preventDefault();

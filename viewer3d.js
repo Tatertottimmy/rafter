@@ -441,6 +441,7 @@ export class Viewer {
 
   /** Outline these world cells as the selected hand-placed blocks. */
   setSelectedBlocks(cells) {
+    this._selCells = new Set((cells || []).map((c) => c.join(',')));
     this._clearGroup(this._blockSelGroup);
     const color = new THREE.Color(cssVar(this.container, '--accent', '#d9814a'));
     const mat = new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true });
@@ -788,7 +789,20 @@ export class Viewer {
       // A hand-placed block is picked before the object it sits on; a click selects it,
       // a drag still orbits.
       const cell = this._placedAt(e);
-      if (cell) { this._down = { x: e.clientX, y: e.clientY, hit: null, block: cell }; return; }
+      if (cell) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        const add = e.shiftKey || e.ctrlKey || e.metaKey;
+        const wasSelected = this._selCells && this._selCells.has(cell.join(','));
+        if (!wasSelected && this.cb.onSelectBlock) this.cb.onSelectBlock(cell, { add });
+        const planeY = cell[1] + 0.5;
+        const p0 = this._planePoint(e, planeY);
+        this.controls.enabled = false;
+        try { this.renderer.domElement.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+        // Shift+click on an already-selected block deselects it (on release, if it didn't move).
+        this._blockDrag = { x: e.clientX, y: e.clientY, cell, planeY, p0, dx: 0, dz: 0, moved: false, toggle: wasSelected && add, pointerId: e.pointerId };
+        return;
+      }
     }
     this._down = { x: e.clientX, y: e.clientY, hit };
     if (!hit) return; // let OrbitControls orbit
@@ -841,6 +855,18 @@ export class Viewer {
   }
 
   _onPointerMove(e) {
+    const bd = this._blockDrag;
+    if (bd) {
+      e.stopImmediatePropagation();
+      if (!bd.p0) return;
+      const p = this._planePoint(e, bd.planeY);
+      if (!p) return;
+      const dx = Math.round(p.x - bd.p0.x), dz = Math.round(p.z - bd.p0.z);
+      if (dx === bd.dx && dz === bd.dz) return;
+      bd.dx = dx; bd.dz = dz; bd.moved = true;
+      if (this.cb.onMoveBlocks) this.cb.onMoveBlocks(dx, dz);
+      return;
+    }
     if (this.tool !== 'select') {
       if (this._stroke) { e.stopImmediatePropagation(); this._strokeAt(e); return; }
       this._hoverEvt = e;
@@ -892,6 +918,17 @@ export class Viewer {
   }
 
   _onPointerUp(e) {
+    const bd = this._blockDrag;
+    if (bd) {
+      e.stopImmediatePropagation();
+      try { this.renderer.domElement.releasePointerCapture(bd.pointerId); } catch { /* ignore */ }
+      this._blockDrag = null;
+      this.controls.enabled = true;
+      this._down = null;
+      if (bd.moved) { if (this.cb.onMoveBlocksEnd) this.cb.onMoveBlocksEnd(); }
+      else if (bd.toggle && this.cb.onSelectBlock) this.cb.onSelectBlock(bd.cell, { add: true });
+      return;
+    }
     if (this._stroke) {
       e.stopImmediatePropagation();
       try { this.renderer.domElement.releasePointerCapture(this._stroke.pointerId); } catch { /* ignore */ }
@@ -923,10 +960,6 @@ export class Viewer {
     }
     const dn = this._down;
     this._down = null;
-    if (dn && dn.block && e.type === 'pointerup') {
-      if (Math.hypot(e.clientX - dn.x, e.clientY - dn.y) < 4 && this.cb.onSelectBlock) this.cb.onSelectBlock(dn.block, { add: e.shiftKey || e.ctrlKey || e.metaKey });
-      return;
-    }
     if (dn && !dn.hit && e.type === 'pointerup') {
       const dist = Math.hypot(e.clientX - dn.x, e.clientY - dn.y);
       if (dist < 4) {
