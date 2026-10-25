@@ -961,14 +961,14 @@ function deleteObject(id) {
 }
 // ------------------------------------------------------------------ tools: paint / place / erase
 const TOOL_HINTS = {
-  paint: 'Click a wall or roof to repaint it · One block repaints just that block · Shift+drag paints a stroke · Alt+click picks up a material · drag or middle-drag to orbit, right-drag to pan',
-  place: 'Click a block face (or the ground) to place · Stairs face the way you look · Shift+drag places a row · Alt+click picks up a material · drag or middle-drag to orbit, right-drag to pan',
-  erase: 'Click a block to remove it · Shift+drag erases a stroke · drag or middle-drag to orbit, right-drag to pan',
+  paint: 'Click a wall or roof to repaint it · One block repaints just that block · Shift+drag paints a stroke · Alt+click picks up a material · drag or right-drag to orbit, middle-drag to pan',
+  place: 'Click a block face (or the ground) to place · Stairs face the way you look · Shift+drag places a row · Alt+click picks up a material · drag or right-drag to orbit, middle-drag to pan',
+  erase: 'Click a block to remove it · Shift+drag erases a stroke · drag or right-drag to orbit, middle-drag to pan',
 };
 const AREA_HINTS = {
-  paint: 'Drag a rectangle to repaint every block on that layer · click for one block · middle-drag to orbit',
-  place: 'Drag a rectangle to fill a floor on that layer · click for one block · middle-drag to orbit',
-  erase: 'Drag a rectangle to clear every block on that layer · click for one block · middle-drag to orbit',
+  paint: 'Drag a rectangle to repaint every block on that layer · click for one block · right-drag to orbit',
+  place: 'Drag a rectangle to fill a floor on that layer · click for one block · right-drag to orbit',
+  erase: 'Drag a rectangle to clear every block on that layer · click for one block · right-drag to orbit',
 };
 const AREA_MAX = 128 * 128;
 const toolOpts = () => ({ shape: state.shape, area: state.area });

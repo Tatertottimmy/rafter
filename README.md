@@ -63,7 +63,7 @@ No build step is needed to develop: serve the folder with any static web server
 - **Move arrows**: a selected box, pillar or wall segment shows red (x), green (up/down) and blue (z)
   arrows. Drag one to move along just that axis; the green one lifts the box, e.g. to sit a tower or
   spire on top of another roof. Keys: arrows move, Page Up / Page Down raise and lower (Shift = 5).
-- **Mouse**: middle-drag orbits (so does left-drag on empty space), right-drag pans, the wheel zooms.
+- **Mouse**: right-drag orbits (so does left-drag on empty space), middle-drag pans, the wheel zooms.
 - **Walls, windows and doors** (Details): window width, height, sill height and gap, panes or glass
   blocks, flat or arched tops, which walls get them, frames and sills; a doorway on any side with
   its own width and height; timber studs at a set spacing. Corner posts, eave beams and the

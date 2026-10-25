@@ -272,9 +272,9 @@ export class Viewer {
     this.controls.enableDamping = false;
     this.controls.maxPolarAngle = Math.PI * 0.52;
     this.controls.target.set(0, 0, 0);
-    // Middle-drag orbits, right-drag pans, wheel zooms. Left-drag on empty space orbits too,
+    // Right-drag orbits, middle-drag pans, wheel zooms. Left-drag on empty space orbits too,
     // except in Area mode where it draws.
-    this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
+    this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
     // Stop the browser's middle-click autoscroll over the canvas.
     el.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
     this._onControlsChange = () => this.requestRender();
