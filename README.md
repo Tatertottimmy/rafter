@@ -63,6 +63,15 @@ No build step is needed to develop: serve the folder with any static web server
 - **Move arrows**: a selected box, pillar or wall segment shows red (x), green (up/down) and blue (z)
   arrows. Drag one to move along just that axis; the green one lifts the box, e.g. to sit a tower or
   spire on top of another roof. Keys: arrows move, Page Up / Page Down raise and lower (Shift = 5).
+- **Mouse**: middle-drag orbits (so does left-drag on empty space), right-drag pans, the wheel zooms.
+- **Walls, windows and doors** (Details): window width, height, sill height and gap, panes or glass
+  blocks, flat or arched tops, which walls get them, frames and sills; a doorway on any side with
+  its own width and height; timber studs at a set spacing. Corner posts, eave beams and the
+  foundation course are there too.
+- **Pillars**: thickness (1–5), full blocks or a thin wall post, and a base and capital ring made
+  of blocks, stairs or slabs.
+- **Clone**: the Clone panel under any selected object or placed blocks makes N copies east, west,
+  north, south, up or down with a gap; Ctrl+D makes one. Copying a box up stacks floors.
 - **Roof types**: flat, shed, gable, hip, half-hip (jerkinhead), irimoya (Japanese hip-and-gable:
   a hip skirt on the ends with a gable standing on it), gambrel, mansard, round. **Upturned corners**
   curl the eaves up into each corner (lift in blocks + how far along the eave the curl reaches); try it
@@ -74,7 +83,9 @@ No build step is needed to develop: serve the folder with any static web server
   "One block" mode. **Place** (P) puts a block, slab or stairs against the face you click or on the
   ground; stairs face the way you look, slabs go top or bottom by where you click. **Area** (A) mode:
   drag a rectangle to place a whole floor, erase or repaint every block on that layer in one step
-  (right-drag orbits while it is on). On the layer plan any drag works this way. **Erase** (E)
+  start on a wall face and the rectangle stands up in that wall, so you can paint or erase a window
+  shape straight into it. On the layer plan any drag works this way. **Pane** places glass panes
+  that run along the wall you click. **Erase** (E)
   removes blocks. Shift+drag paints, places or erases a stroke; Alt+click picks up a block's
   material. The layer plan takes clicks too, on the current layer. In **Select**, click a block
   you placed to select it (Shift+click for more). Drag them to move, or use the arrow keys

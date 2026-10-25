@@ -272,6 +272,11 @@ export class Viewer {
     this.controls.enableDamping = false;
     this.controls.maxPolarAngle = Math.PI * 0.52;
     this.controls.target.set(0, 0, 0);
+    // Middle-drag orbits, right-drag pans, wheel zooms. Left-drag on empty space orbits too,
+    // except in Area mode where it draws.
+    this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
+    // Stop the browser's middle-click autoscroll over the canvas.
+    el.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
     this._onControlsChange = () => this.requestRender();
     this.controls.addEventListener('change', this._onControlsChange);
 
@@ -311,7 +316,8 @@ export class Viewer {
       this.overlayGroup.add(outline);
     }
     for (const p of design.pillars || []) {
-      addProxy(p.x, p.baseY, p.z, p.x + 1, p.baseY + Math.max(1, p.h), p.z + 1, { type: 'pillar', id: p.id, baseY: p.baseY });
+      const n = p.size || 1;
+      addProxy(p.x, p.baseY, p.z, p.x + n, p.baseY + Math.max(1, p.h), p.z + n, { type: 'pillar', id: p.id, baseY: p.baseY });
     }
     for (const s of design.segments || []) {
       const x0 = Math.min(s.x0, s.x1), x1 = Math.max(s.x0, s.x1) + 1;
@@ -402,8 +408,6 @@ export class Viewer {
     this.tool = tool || 'select';
     this.toolOpts = opts || {};
     this.renderer.domElement.style.cursor = this.tool === 'select' ? '' : 'crosshair';
-    // Area mode: left-drag draws a rectangle, so orbit moves to the right button.
-    this.controls.mouseButtons.RIGHT = this._areaMode() ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
     this._hoverKey = null;
     this._setHover(this._hoverEvt && this.tool !== 'select' ? this.pickBlock(this._hoverEvt) : null);
   }
@@ -478,11 +482,12 @@ export class Viewer {
     this._clearGroup(this._hoverGroup);
     if (a) {
       const x0 = Math.min(a.anchor[0], a.cur[0]), x1 = Math.max(a.anchor[0], a.cur[0]) + 1;
+      const y0 = Math.min(a.anchor[1], a.cur[1]), y1 = Math.max(a.anchor[1], a.cur[1]) + 1;
       const z0 = Math.min(a.anchor[2], a.cur[2]), z1 = Math.max(a.anchor[2], a.cur[2]) + 1;
       const color = new THREE.Color(this.tool === 'erase' ? cssVar(this.container, '--danger', '#c0392b') : cssVar(this.container, '--accent', '#d9814a'));
-      const geo = new THREE.BoxGeometry(x1 - x0 + 0.02, 1.02, z1 - z0 + 0.02);
+      const geo = new THREE.BoxGeometry(x1 - x0 + 0.02, y1 - y0 + 0.02, z1 - z0 + 0.02);
       const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true }));
-      line.position.set((x0 + x1) / 2, a.y + 0.5, (z0 + z1) / 2);
+      line.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
       line.renderOrder = 20;
       const fill = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, depthWrite: false }));
       fill.position.copy(line.position);
@@ -726,10 +731,11 @@ export class Viewer {
       this._addRotateHandle(obj, 'box', obj.x - oh, obj.z - oh, E, accent, solid);
       this._addMoveGizmo(obj, obj.x + obj.w / 2, obj.baseY + Math.max(1, obj.wallH) / 2, obj.z + obj.d / 2);
     } else if (type === 'pillar') {
-      const l = this._rectLine(obj.x, obj.z, obj.x + 1, obj.z + 1, obj.baseY + 0.02, solid); l.renderOrder = 10;
-      const t = this._rectLine(obj.x, obj.z, obj.x + 1, obj.z + 1, obj.baseY + Math.max(1, obj.h) + 0.02, solid); t.renderOrder = 10;
+      const n = obj.size || 1;
+      const l = this._rectLine(obj.x, obj.z, obj.x + n, obj.z + n, obj.baseY + 0.02, solid); l.renderOrder = 10;
+      const t = this._rectLine(obj.x, obj.z, obj.x + n, obj.z + n, obj.baseY + Math.max(1, obj.h) + 0.02, solid); t.renderOrder = 10;
       this.selGroup.add(l, t);
-      this._addMoveGizmo(obj, obj.x + 0.5, obj.baseY + Math.max(1, obj.h) / 2, obj.z + 0.5);
+      this._addMoveGizmo(obj, obj.x + n / 2, obj.baseY + Math.max(1, obj.h) / 2, obj.z + n / 2);
     } else if (type === 'segment') {
       const x0 = Math.min(obj.x0, obj.x1), x1 = Math.max(obj.x0, obj.x1) + 1;
       const z0 = Math.min(obj.z0, obj.z1), z1 = Math.max(obj.z0, obj.z1) + 1;
@@ -867,9 +873,14 @@ export class Viewer {
           e.preventDefault();
           this.controls.enabled = false;
           try { this.renderer.domElement.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-          // Track the pointer on the layer's top face for erase/paint, its floor for place.
+          // Started on a wall face: the rectangle stands in that wall's plane (draw a window).
+          // Otherwise it lies on the layer: the pointer tracks the layer's top face for
+          // erase / paint and its floor for place.
+          const n = info.normal || [0, 1, 0];
+          const vertical = !info.ground && n[1] === 0 && (n[0] !== 0 || n[2] !== 0);
+          const wallAxis = vertical ? (n[0] !== 0 ? 0 : 2) : null; // the coordinate that stays fixed
           const planeY = this.tool === 'place' ? anchor[1] : anchor[1] + 1;
-          this._area = { anchor, cur: anchor, y: anchor[1], planeY, info, alt: e.altKey, pointerId: e.pointerId };
+          this._area = { anchor, cur: anchor, y: anchor[1], planeY, wallAxis, info, alt: e.altKey, pointerId: e.pointerId };
           this._setAreaPreview(this._area);
           return;
         }
@@ -974,10 +985,21 @@ export class Viewer {
     const ar = this._area;
     if (ar) {
       e.stopImmediatePropagation();
-      const p = this._planePoint(e, ar.planeY);
-      if (!p) return;
-      const cur = [Math.floor(p.x), ar.y, Math.floor(p.z)];
-      if (cur[0] === ar.cur[0] && cur[2] === ar.cur[2]) return;
+      let cur;
+      if (ar.wallAxis !== null) {
+        this._setNDC(e);
+        const nrm = ar.wallAxis === 0 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
+        const plane = new THREE.Plane(nrm, -(ar.anchor[ar.wallAxis] + 0.5));
+        const p = this.raycaster.ray.intersectPlane(plane, new THREE.Vector3());
+        if (!p) return;
+        cur = [Math.floor(p.x), Math.floor(p.y), Math.floor(p.z)];
+        cur[ar.wallAxis] = ar.anchor[ar.wallAxis];
+      } else {
+        const p = this._planePoint(e, ar.planeY);
+        if (!p) return;
+        cur = [Math.floor(p.x), ar.y, Math.floor(p.z)];
+      }
+      if (cur[0] === ar.cur[0] && cur[1] === ar.cur[1] && cur[2] === ar.cur[2]) return;
       ar.cur = cur;
       this._setAreaPreview(ar);
       return;
@@ -1076,9 +1098,12 @@ export class Viewer {
       this.controls.enabled = true;
       this._setAreaPreview(null);
       if (e.type !== 'pointerup') return;
-      const same = ar.cur[0] === ar.anchor[0] && ar.cur[2] === ar.anchor[2];
+      const same = ar.cur[0] === ar.anchor[0] && ar.cur[1] === ar.anchor[1] && ar.cur[2] === ar.anchor[2];
       if (same) { if (this.cb.onBlockClick) this.cb.onBlockClick(ar.info, { alt: ar.alt, shift: false }); }
-      else if (this.cb.onArea) this.cb.onArea({ x0: ar.anchor[0], z0: ar.anchor[2], x1: ar.cur[0], z1: ar.cur[2], y: ar.y }, ar.info);
+      else if (this.cb.onArea) {
+        const [ax, ay, az] = ar.anchor, [bx, by, bz] = ar.cur;
+        this.cb.onArea({ x0: ax, y0: ay, z0: az, x1: bx, y1: by, z1: bz }, ar.info);
+      }
       return;
     }
     const bd = this._blockDrag;

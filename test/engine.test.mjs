@@ -674,3 +674,42 @@ test('a tower rising out of a lower roof keeps its walls (no roof curtain down t
   }
   assert.equal(get(g, 5, 15, 7).role, 'wall', 'tower wall shows above the main roof');
 });
+
+test('wall openings: windows, door, frames, sills, studs; stacked floors keep their own walls', () => {
+  const det = { windows: true, windowMat: 'glass', winWidth: 3, winHeight: 2, winSill: 1, winGap: 1, door: true, doorSide: 'south', doorWidth: 2, doorHeight: 2, frame: true, frameMat: 'spruce_log', sills: true, sillMat: 'spruce' };
+  const b = box({ w: 13, d: 7, wallH: 6, details: det });
+  const g = buildGrid(design([b]));
+  const north = [];
+  for (let x = 0; x < 13; x++) north.push(get(g, x, 1, 0).kind === 'pane' ? 'G' : get(g, x, 1, 0).mat === 'spruce_log' ? 'F' : '.');
+  assert.ok(north.join('').includes('FGGGF'), north.join(''));
+  assert.ok(!north.join('').slice(0, 2).includes('G') && !north.join('').slice(-2).includes('G'), 'no glass next to the corners');
+  // door: a 2-wide, 2-high opening in the south wall, centred
+  const doorCols = [];
+  for (let x = 1; x < 12; x++) if (!get(g, x, 1, 6) && !get(g, x, 2, 6)) doorCols.push(x);
+  assert.deepEqual(doorCols, [5, 6]);
+  // sills sit outside the north wall under the windows
+  assert.ok([...g.blocks.entries()].some(([k, v]) => v.path === 'details.sillMat' && k.endsWith(',-1')));
+  // studs
+  const st = buildGrid(design([box({ w: 9, d: 5, wallH: 5, details: { studs: true, studGap: 2, beamMat: 'oak_log' } })]));
+  assert.equal(get(st, 2, 2, 0).mat, 'oak_log');
+  assert.notEqual(get(st, 3, 2, 0).mat, 'oak_log');
+  // a copy stacked on top gets its own windows
+  const up = box({ id: 'b2', baseY: 6, w: 13, d: 7, wallH: 6, details: det });
+  const two = buildGrid(design([{ ...b, roof: { ...b.roof, type: 'flat' } }, up]));
+  assert.equal(get(two, 6, 7, 0).kind, 'pane', 'upper floor has windows');
+  assert.equal(get(two, 6, 7, 0).src, 'b2');
+});
+
+test('pillars: thickness, wall posts, base and capital rings; pane edits', () => {
+  const g = buildGrid({ boxes: [], pillars: [{ id: 'p1', x: 0, z: 0, baseY: 0, h: 4, material: 'stone_bricks', size: 2, base: 'stairs', baseMat: 'stone_bricks', cap: 'slab', capMat: 'stone_bricks' }], edits: [{ x: 9, y: 0, z: 9, shape: 'pane', mat: 'glass', axis: 'z' }] });
+  assert.equal(get(g, 1, 3, 1).mat, 'stone_bricks');
+  assert.equal(get(g, -1, 0, 0).kind, 'stair');
+  assert.equal(get(g, -1, 0, 0).props.facing, 'east');
+  assert.match(get(g, -1, 0, -1).props.shape, /outer/);
+  assert.equal(get(g, 2, 3, 2).kind, 'slab');
+  assert.equal(get(g, 2, 3, 2).props.type, 'top');
+  assert.equal(get(g, 9, 0, 9).kind, 'pane');
+  assert.equal(get(g, 9, 0, 9).props.north, 'true');
+  const w = buildGrid({ boxes: [], pillars: [{ id: 'p1', x: 0, z: 0, h: 3, material: 'cobblestone', shape: 'wall' }] });
+  assert.equal(get(w, 0, 1, 0).kind, 'wall');
+});

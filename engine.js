@@ -26,13 +26,25 @@ export const ROOF_PROFILES = ['straight', 'rounded', 'flared', 'bell'];
 export const DETAIL_DEFAULTS = {
   trim: false, ridge: false, corners: false, base: false, beams: false, windows: false,
   trimMat: 'dark_oak', cornerMat: 'spruce_log', baseMat: 'cobblestone', beamMat: 'stripped_spruce_log', windowMat: 'glass',
+  // Window layout: size, sill row (blocks above the base), gap between windows, which walls.
+  winStyle: 'pane', winWidth: 1, winHeight: 3, winSill: 1, winGap: 2, winTop: 'flat',
+  winNorth: true, winEast: true, winSouth: true, winWest: true,
+  frame: false, frameMat: 'stripped_spruce_log', sills: false, sillMat: 'spruce',
+  door: false, doorSide: 'south', doorWidth: 1, doorHeight: 2,
+  studs: false, studGap: 3,
 };
+const DETAIL_ENUMS = { winStyle: ['pane', 'block'], winTop: ['flat', 'arch'], doorSide: ['north', 'east', 'south', 'west'] };
+const DETAIL_RANGES = { winWidth: [1, 16], winHeight: [1, 16], winSill: [0, 16], winGap: [0, 16], doorWidth: [1, 8], doorHeight: [1, 16], studGap: [2, 16] };
+const SIDE_FLAG = { north: 'winNorth', east: 'winEast', south: 'winSouth', west: 'winWest' };
+// Pillars: thickness, shape (full blocks or a wall-block post), base and capital.
+export const PILLAR_DEFAULTS = { size: 1, shape: 'block', base: 'none', baseMat: 'stone_bricks', cap: 'none', capMat: 'stone_bricks' };
+const PILLAR_ENUMS = { shape: ['block', 'wall'], base: ['none', 'block', 'stairs', 'slab'], cap: ['none', 'block', 'stairs', 'slab'] };
 // Texture variation: swap a share of wall / roof blocks for look-alike materials so big
 // surfaces don't read as one flat repeat. Mix '' = pick automatically (suggestVariants).
 export const VARIATION_STYLES = ['patches', 'scatter', 'grime', 'streaks'];
 export const VARIATION_DEFAULTS = { wall: 0, roof: 0, style: 'patches', wallMix: '', wallMix2: '', roofMix: '', roofMix2: '', seed: 1 };
 // Hand edits: paint keeps the existing block's shape, place puts a new block, erase clears.
-export const EDIT_SHAPES = ['paint', 'full', 'slab', 'stair', 'erase'];
+export const EDIT_SHAPES = ['paint', 'full', 'slab', 'stair', 'pane', 'erase'];
 export const EDITS_MAX = 50000;
 export const RISES = [0.5, 1, 1.5, 2, 3];
 export const RIDGE_CAPS = ['block', 'slab', 'wall'];
@@ -142,7 +154,10 @@ export function validateDesign(design) {
     const det = b.details && typeof b.details === 'object' ? b.details : {};
     b.details = det;
     for (const [k, v] of Object.entries(DETAIL_DEFAULTS)) {
-      det[k] = typeof v === 'boolean' ? bool(det[k], v) : familyKey(det[k], v, false);
+      if (typeof v === 'boolean') det[k] = bool(det[k], v);
+      else if (typeof v === 'number') det[k] = int(det[k], v, ...DETAIL_RANGES[k]);
+      else if (DETAIL_ENUMS[k]) det[k] = oneOf(det[k], DETAIL_ENUMS[k], v);
+      else det[k] = familyKey(det[k], v, false);
     }
     const va = b.variation && typeof b.variation === 'object' ? b.variation : {};
     b.variation = va;
@@ -162,6 +177,10 @@ export function validateDesign(design) {
     p.baseY = int(p.baseY, 0, -64, 320);
     p.h = int(p.h, 4, 1, 256);
     p.material = familyKey(p.material, 'oak_log', false);
+    p.size = int(p.size, 1, 1, 5);
+    for (const k of ['shape', 'base', 'cap']) p[k] = oneOf(p[k], PILLAR_ENUMS[k], PILLAR_DEFAULTS[k]);
+    p.baseMat = familyKey(p.baseMat, PILLAR_DEFAULTS.baseMat, false);
+    p.capMat = familyKey(p.capMat, PILLAR_DEFAULTS.capMat, false);
   }
 
   d.segments = d.segments.filter((s) => s && typeof s === 'object');
@@ -200,6 +219,7 @@ function validateEdits(list, rel) {
     if (shape === 'slab' || shape === 'stair') out.half = oneOf(e.half, ['bottom', 'top'], 'bottom');
     if (shape === 'stair') out.facing = oneOf(e.facing, DIRS, 'north');
     if (shape === 'full' && e.axis) out.axis = oneOf(e.axis, ['x', 'y', 'z'], 'y');
+    if (shape === 'pane') out.axis = oneOf(e.axis, ['x', 'z'], 'x');
     const k = blockKey(out.x, out.y, out.z);
     byCell.delete(k);
     byCell.set(k, out);
@@ -231,6 +251,13 @@ export function rotatePatch(kind, obj, q) {
         if (odd && (ne.axis === 'x' || ne.axis === 'z')) ne.axis = ne.axis === 'x' ? 'z' : 'x';
         return ne;
       });
+    }
+    if (obj.details) {
+      // Per-side window switches and the door side turn with the box.
+      const det = { ...obj.details };
+      for (const side of DIRS) if (SIDE_FLAG[side] in obj.details) det[SIDE_FLAG[turn(side)]] = obj.details[SIDE_FLAG[side]];
+      if (obj.details.doorSide) det.doorSide = turn(obj.details.doorSide);
+      patch.details = det;
     }
     if (obj.roof) {
       patch.roof = { ...obj.roof, shedLow: turn(obj.roof.shedLow || 'south') };
@@ -578,6 +605,66 @@ function upperCoversFace(blk, d) {
 }
 
 // ---------------------------------------------------------------------------------
+// Wall openings: windows, door, frames, studs
+// ---------------------------------------------------------------------------------
+/**
+ * Lays out one box's wall openings. at(side, i, y) -> 'glass' | 'door' | 'frameV' | 'frameH' |
+ * 'stud' | null for column i (0 = west / north end) of that side at layer y. Windows sit
+ * symmetric about each side's centre, winWidth wide with winGap between them, never touching
+ * a corner column or its neighbour, and only whole windows are cut.
+ */
+function wallOpenings(b) {
+  const det = b.details;
+  const E = b.baseY + b.wallH;
+  const top = E - 2; // highest row an opening may use (the eave row stays wall / beam)
+  const rowLo = b.baseY + Math.max(det.winSill, det.base ? 1 : 0);
+  const rowHi = Math.min(rowLo + det.winHeight - 1, top);
+  const W = det.winWidth, P = W + det.winGap;
+  const arch = det.winTop === 'arch' && W >= 3 && rowHi + 1 <= top ? rowHi + 1 : null;
+  const len = (side) => (side === 'north' || side === 'south' ? b.w : b.d);
+  // Columns lo..hi of the centred run of width n on a side of length L (shifted half a block
+  // when the parities differ, so a 2-wide door on an odd wall leans east / south).
+  const centred = (L, n) => { const lo = Math.floor((L - n) / 2); return [lo, lo + n - 1]; };
+  const door = (side) => {
+    if (!det.door || side !== det.doorSide) return null;
+    const L = len(side);
+    const n = Math.min(det.doorWidth, Math.max(1, L - 2));
+    const [lo, hi] = centred(L, n);
+    // The opening starts one above baseY (the floor / foundation row) and is doorHeight tall.
+    return { lo, hi, y0: b.baseY + 1, y1: Math.min(b.baseY + det.doorHeight, top + 1) };
+  };
+  const doorAt = (side, i, y) => { const d = door(side); return !!d && i >= d.lo && i <= d.hi && y >= d.y0 && y <= d.y1; };
+  const winCol = (side, i) => {
+    if (!det.windows || !det[SIDE_FLAG[side]]) return false;
+    const L = len(side);
+    const [lo0] = centred(L, W);
+    const j = Math.floor((i - lo0) / P); // each period is a window then its gap
+    const lo = lo0 + j * P, hi = lo + W - 1;
+    if (i < lo || i > hi || lo < 2 || hi > L - 3) return false;
+    const d = door(side);
+    return !(d && hi >= d.lo - 1 && lo <= d.hi + 1); // keep windows off the doorway
+  };
+  const glassAt = (side, i, y) => {
+    if (y >= rowLo && y <= rowHi) return winCol(side, i);
+    if (y === arch) return winCol(side, i) && winCol(side, i - 1) && winCol(side, i + 1);
+    return false;
+  };
+  const openAt = (side, i, y) => glassAt(side, i, y) || doorAt(side, i, y);
+  const at = (side, i, y) => {
+    if (doorAt(side, i, y)) return 'door';
+    if (glassAt(side, i, y)) return 'glass';
+    const L = len(side);
+    if (det.frame && i >= 1 && i <= L - 2 && y > b.baseY) {
+      if (openAt(side, i - 1, y) || openAt(side, i + 1, y)) return 'frameV';
+      for (const dy of [-1, 1]) for (const di of [-1, 0, 1]) if (openAt(side, i + di, y + dy)) return di ? 'frameV' : 'frameH';
+    }
+    if (det.studs && i % det.studGap === 0 && i > 0 && i < L - 1 && y > b.baseY && y < E - 1) return 'stud';
+    return null;
+  };
+  return { at, rowLo };
+}
+
+// ---------------------------------------------------------------------------------
 // buildGrid
 // ---------------------------------------------------------------------------------
 export function buildGrid(input) {
@@ -792,7 +879,8 @@ export function buildGrid(input) {
     const E = b.baseY + b.wallH;
     const det = b.details;
     const x1 = b.x + b.w - 1, z1 = b.z + b.d - 1;
-    const winTop = b.baseY + Math.min(b.wallH - 2, 3); // window rows: baseY+1 .. winTop
+    const op = wallOpenings(b);
+    const sills = [];
     for (let cz = b.z; cz < b.z + b.d; cz++) {
       for (let cx = b.x; cx < b.x + b.w; cx++) {
         const perimeter = cx === b.x || cx === x1 || cz === b.z || cz === z1;
@@ -800,24 +888,42 @@ export function buildGrid(input) {
         const corner = (cx === b.x || cx === x1) && (cz === b.z || cz === z1);
         // Side this column belongs to: runs along x (north/south walls) or z (east/west walls).
         const along = cz === b.z || cz === z1 ? 'x' : 'z';
-        const i = along === 'x' ? cx - b.x : cz - b.z, L = along === 'x' ? b.w : b.d;
-        // Windows: symmetric about the side's centre, every 3rd column, never next to a corner.
-        const k = Math.abs(i - (L - 1) / 2);
-        const winCol = det.windows && !corner && i >= 2 && i <= L - 3 && (k % 3) < 1;
+        const side = along === 'x' ? (cz === b.z ? 'north' : 'south') : (cx === b.x ? 'west' : 'east');
+        const i = along === 'x' ? cx - b.x : cz - b.z;
         const lowest = roofMin.get(colKey(cx, cz));
-        const start = (lowest === undefined ? E : lowest) - 1;
+        let start = (lowest === undefined ? E : lowest) - 1;
+        // A box stacked on this one (another floor) builds its own walls: stop below it.
+        for (const o of design.boxes) {
+          if (o !== b && o.walls && o.baseY > b.baseY && o.baseY <= start && cx >= o.x && cx < o.x + o.w && cz >= o.z && cz < o.z + o.d) start = o.baseY - 1;
+        }
         for (let y = start; y >= b.baseY; y--) {
           if (has(cx, y, cz)) break; // STOP at anything already there (roof, other walls, ...)
           if (insideOtherRoom(b, cx, cz, y, false)) break; // STOP inside another box's room
+          const cell = corner ? null : op.at(side, i, y);
           let blk;
           if (det.base && y === b.baseY) blk = tag(fullBlock(det.baseMat, 'wall'), b.id, 'details.baseMat');
           else if (det.corners && corner) blk = tag(fullBlock(det.cornerMat, 'wall', 'y'), b.id, 'details.cornerMat');
           else if (det.beams && y === E - 1) blk = tag(fullBlock(det.beamMat, 'wall', along), b.id, 'details.beamMat');
-          else if (winCol && y >= b.baseY + 1 && y <= winTop) blk = tag(paneBlock(det.windowMat, along, 'wall'), b.id, 'details.windowMat');
+          else if (cell === 'door') continue; // doorway: leave the opening
+          else if (cell === 'glass') {
+            blk = tag(det.winStyle === 'block' ? fullBlock(det.windowMat, 'wall') : paneBlock(det.windowMat, along, 'wall'), b.id, 'details.windowMat');
+            if (det.sills && y === op.rowLo) sills.push([cx, cz, side]);
+          } else if (cell === 'frameV') blk = tag(fullBlock(det.frameMat, 'wall', 'y'), b.id, 'details.frameMat');
+          else if (cell === 'frameH') blk = tag(fullBlock(det.frameMat, 'wall', along), b.id, 'details.frameMat');
+          else if (cell === 'stud') blk = tag(fullBlock(det.beamMat, 'wall', 'y'), b.id, 'details.beamMat');
           else blk = tag(fullBlock(b.wallMaterial, 'wall'), b.id, 'wallMaterial');
           put(cx, y, cz, blk);
         }
       }
+    }
+    // Window sills: an upside-down stair (or slab) just outside the wall under each window.
+    for (const [cx, cz, side] of sills) {
+      const [dx, dz] = DIR_OFFSET[side];
+      const x = cx + dx, y = op.rowLo - 1, z = cz + dz;
+      if (has(x, y, z)) continue;
+      const f = fam(det.sillMat);
+      const blk = f.stairs ? stairBlock(det.sillMat, OPPOSITE[side], 'top', 'wall') : slabBlock(det.sillMat, 'top', 'wall');
+      put(x, y, z, tag(blk, b.id, 'details.sillMat'));
     }
   }
   for (const b of design.boxes) {
@@ -832,10 +938,39 @@ export function buildGrid(input) {
   }
 
   // ---- STEP 7: pillars, segments ---------------------------------------------------------
+  let pillarStairs = false;
   for (const p of design.pillars) {
-    for (let y = p.baseY; y < p.baseY + p.h; y++) {
-      if (!has(p.x, y, p.z)) put(p.x, y, p.z, tag(fullBlock(p.material, 'pillar'), p.id, 'material'));
+    const n = p.size, top = p.baseY + p.h - 1;
+    const x1 = p.x + n - 1, z1 = p.z + n - 1;
+    // Wall-block posts connect to their neighbours inside a thick pillar.
+    const conns = (x, z) => ({ north: z > p.z ? 'tall' : 'none', south: z < z1 ? 'tall' : 'none', west: x > p.x ? 'tall' : 'none', east: x < x1 ? 'tall' : 'none' });
+    for (let y = p.baseY; y <= top; y++) {
+      for (let z = p.z; z <= z1; z++) for (let x = p.x; x <= x1; x++) {
+        if (has(x, y, z)) continue;
+        const blk = p.shape === 'wall' ? wallBlock(p.material, conns(x, z), 'pillar') : fullBlock(p.material, 'pillar', 'y');
+        put(x, y, z, tag(blk, p.id, 'material'));
+      }
     }
+    // Base (plinth) and capital: a one-block ring round the bottom / top row.
+    const ring = (y, kind, mat, path, half) => {
+      if (kind === 'none') return;
+      for (let z = p.z - 1; z <= z1 + 1; z++) for (let x = p.x - 1; x <= x1 + 1; x++) {
+        const edge = x === p.x - 1 || x === x1 + 1 || z === p.z - 1 || z === z1 + 1;
+        if (!edge || has(x, y, z)) continue;
+        let blk;
+        if (kind === 'block') blk = fullBlock(mat, 'pillar');
+        else if (kind === 'slab') blk = slabBlock(mat, half, 'pillar');
+        else {
+          // Stairs climb toward the pillar; corner pieces become outer corners in the shape pass.
+          const facing = z === p.z - 1 ? 'south' : z === z1 + 1 ? 'north' : x === p.x - 1 ? 'east' : 'west';
+          blk = stairBlock(mat, facing, half, 'pillar');
+          pillarStairs = true;
+        }
+        put(x, y, z, tag(blk, p.id, path));
+      }
+    };
+    ring(p.baseY, p.base, p.baseMat, 'baseMat', 'bottom');
+    if (p.h > 1 || p.base === 'none') ring(top, p.cap, p.capMat, 'capMat', 'top');
   }
   for (const sg of design.segments) {
     const cols = [];
@@ -902,12 +1037,13 @@ export function buildGrid(input) {
     let blk;
     if (e.shape === 'slab') blk = slabBlock(e.mat, e.half, 'placed');
     else if (e.shape === 'stair') { blk = stairBlock(e.mat, e.facing, e.half, 'placed'); editedStairs = true; }
+    else if (e.shape === 'pane') blk = paneBlock(e.mat, e.axis, 'placed');
     else blk = fullBlock(e.mat, 'placed', e.axis);
     blk.src = e.owner || null;
     blk.edited = true;
     blocks.set(key, blk);
   }
-  if (editedStairs || edits.length) {
+  if (editedStairs || edits.length || pillarStairs) {
     for (const [key, blk] of blocks) {
       if (blk.kind !== 'stair') continue;
       const [x, y, z] = parseKey(key);

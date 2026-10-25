@@ -52,6 +52,7 @@ const state = {
   paintScope: 'part', // part = the whole wall/roof/trim the block belongs to; block = one block
   shape: 'full',
   area: false,         // Place / Erase / Paint: drag a rectangle instead of single blocks
+  clone: { n: 1, dir: 'east', gap: 1 },
   planFacing: 'north', // stair facing for clicks on the layer plan (R turns it while placing stairs)
   rotAnchor: null, // { id, start, q, sig }: repeated rotations restart from `start` so odd sizes don't drift
 };
@@ -434,6 +435,7 @@ const ROOF_SHOW = {
   profile: (o) => !['flat', 'gambrel', 'mansard'].includes(o.roof.type),
 };
 const DET = (k) => (o) => !!(o.details && o.details[k]);
+const PILLAR_TRIM = [['none', 'None'], ['block', 'Block ring'], ['stairs', 'Stair ring'], ['slab', 'Slab ring']];
 const VAR = (k) => (o) => !!(o.variation && o.variation[k] > 0);
 const STYLE_OPTIONS = [['patches', 'Patches'], ['scatter', 'Scatter'], ['grime', 'Grime (heavier low down)'], ['streaks', 'Streaks (drip marks)']];
 const autoMix = (from, i) => (o) => { const v = suggestVariants(getPath(o, from)); return v[i] || v[0] || null; };
@@ -483,6 +485,28 @@ const SCHEMA = {
       { path: ['details', 'windows'], label: 'Windows', type: 'check' },
       { path: ['details', 'baseMat'], label: 'Foundation material', type: 'material', wide: true, show: DET('base') },
       { path: ['details', 'windowMat'], label: 'Window glass', type: 'material', wide: true, show: DET('windows') },
+      { path: ['details', 'door'], label: 'Doorway', type: 'check' },
+      { path: ['details', 'studs'], label: 'Wall studs', type: 'check' },
+    ] },
+    { group: 'Windows & doors', show: (o) => DET('windows')(o) || DET('door')(o) || DET('studs')(o), fields: [
+      { path: ['details', 'winStyle'], label: 'Glass', type: 'select', options: [['pane', 'Glass panes'], ['block', 'Glass blocks']], show: DET('windows') },
+      { path: ['details', 'winTop'], label: 'Top', type: 'select', options: [['flat', 'Flat'], ['arch', 'Arched (3+ wide)']], show: DET('windows') },
+      { path: ['details', 'winWidth'], label: 'Window width', type: 'int', min: 1, max: 16, show: DET('windows') },
+      { path: ['details', 'winHeight'], label: 'Window height', type: 'int', min: 1, max: 16, show: DET('windows') },
+      { path: ['details', 'winSill'], label: 'Sill height (above base)', type: 'int', min: 0, max: 16, show: DET('windows') },
+      { path: ['details', 'winGap'], label: 'Gap between windows', type: 'int', min: 0, max: 16, show: DET('windows') },
+      { path: ['details', 'winNorth'], label: 'North wall', type: 'check', show: DET('windows') },
+      { path: ['details', 'winSouth'], label: 'South wall', type: 'check', show: DET('windows') },
+      { path: ['details', 'winWest'], label: 'West wall', type: 'check', show: DET('windows') },
+      { path: ['details', 'winEast'], label: 'East wall', type: 'check', show: DET('windows') },
+      { path: ['details', 'frame'], label: 'Frames', type: 'check', show: (o) => DET('windows')(o) || DET('door')(o) },
+      { path: ['details', 'sills'], label: 'Sills', type: 'check', show: DET('windows') },
+      { path: ['details', 'frameMat'], label: 'Frame material', type: 'material', wide: true, show: (o) => DET('frame')(o) && (DET('windows')(o) || DET('door')(o)) },
+      { path: ['details', 'sillMat'], label: 'Sill material', type: 'material', roof: true, wide: true, show: (o) => DET('sills')(o) && DET('windows')(o) },
+      { path: ['details', 'doorSide'], label: 'Door side', type: 'select', options: DIR_OPTIONS, show: DET('door') },
+      { path: ['details', 'doorWidth'], label: 'Door width', type: 'int', min: 1, max: 8, show: DET('door') },
+      { path: ['details', 'doorHeight'], label: 'Door height', type: 'int', min: 1, max: 16, show: DET('door') },
+      { path: ['details', 'studGap'], label: 'Stud spacing', type: 'int', min: 2, max: 16, show: DET('studs'), hint: 'Studs use the beam material.' },
     ] },
     { group: 'Texture', fields: [
       { path: ['variation', 'wall'], label: 'Wall variation', type: 'range', min: 0, max: 80, step: 5, unit: '%', wide: true },
@@ -502,6 +526,12 @@ const SCHEMA = {
       { path: ['baseY'], label: 'Base y', type: 'int' },
       { path: ['h'], label: 'Height', type: 'int', min: 1 },
       { path: ['material'], label: 'Material', type: 'material', roof: false, wide: true },
+      { path: ['size'], label: 'Thickness', type: 'int', min: 1, max: 5 },
+      { path: ['shape'], label: 'Shape', type: 'select', options: [['block', 'Full blocks'], ['wall', 'Wall post (thin)']] },
+      { path: ['base'], label: 'Base', type: 'select', options: PILLAR_TRIM },
+      { path: ['cap'], label: 'Capital (top)', type: 'select', options: PILLAR_TRIM },
+      { path: ['baseMat'], label: 'Base material', type: 'material', roof: true, wide: true, show: (o) => o.base !== 'none' },
+      { path: ['capMat'], label: 'Capital material', type: 'material', roof: true, wide: true, show: (o) => o.cap !== 'none' },
     ] },
   ],
   segment: [
@@ -543,7 +573,7 @@ function renderProps(valuesOnly = false) {
   body.replaceChildren();
 
   for (const group of SCHEMA[f.kind]) {
-    const fs = h('fieldset', { class: 'group' }, h('legend', { text: group.group }));
+    const fs = h('fieldset', { class: 'group', id: 'group-' + group.group.replace(/\W+/g, '-').toLowerCase() }, h('legend', { text: group.group }));
     const grid = h('div', { class: 'fields' });
     for (const field of group.fields) grid.append(buildField(f, field));
     fs.append(grid);
@@ -555,7 +585,83 @@ function renderProps(valuesOnly = false) {
   body.append(h('div', { class: 'props-actions' },
     f.kind === 'pillar' ? null : h('button', { class: 'btn small', id: 'prop-rotate', type: 'button', text: 'Rotate 90°', title: 'Rotate clockwise (R, Shift+R for counter-clockwise). Or drag the round handle in the 3D view.', onclick: () => rotateSelected(1) }),
     h('button', { class: 'btn danger small', id: 'prop-delete', type: 'button', text: 'Delete', onclick: () => requestDelete(f.obj.id) })));
+  body.append(clonePanel(() => cloneObject(f.obj.id)));
   syncPropValues();
+}
+
+// ------------------------------------------------------------------ clone
+// Copies of the selected object or placed blocks: n copies in a direction, gap blocks apart.
+const CLONE_DIRS = { east: [1, 0, 0], west: [-1, 0, 0], south: [0, 0, 1], north: [0, 0, -1], up: [0, 1, 0], down: [0, -1, 0] };
+function clonePanel(run) {
+  const c = state.clone;
+  const num = (key, label, min, max) => {
+    const input = h('input', { type: 'number', id: 'clone-' + key, min, max, step: 1, value: String(c[key]) });
+    input.addEventListener('input', () => { const v = Math.round(Number(input.value)); if (Number.isFinite(v)) c[key] = Math.max(min, Math.min(max, v)); });
+    return h('div', { class: 'field' }, h('label', { for: input.id, text: label }), input);
+  };
+  const dir = h('select', { id: 'clone-dir' }, Object.keys(CLONE_DIRS).map((d) => h('option', { value: d, text: d[0].toUpperCase() + d.slice(1) })));
+  dir.value = c.dir;
+  dir.addEventListener('change', () => { c.dir = dir.value; });
+  return h('fieldset', { class: 'group' }, h('legend', { text: 'Clone' }),
+    h('div', { class: 'fields' },
+      num('n', 'Copies', 1, 64),
+      h('div', { class: 'field' }, h('label', { for: 'clone-dir', text: 'Direction' }), dir),
+      num('gap', 'Gap (blocks)', 0, 64),
+      h('div', { class: 'field action' }, h('button', { class: 'btn small', type: 'button', id: 'clone-run', text: 'Clone', title: 'Make the copies (Ctrl+D makes one)', onclick: run }))));
+}
+/** Extent of an object along x / y / z, so copies line up side by side. */
+function objectSize(kind, o) {
+  if (kind === 'box') return [o.w, o.wallH, o.d];
+  if (kind === 'pillar') return [o.size || 1, o.h, o.size || 1];
+  return [Math.abs(o.x1 - o.x0) + 1, o.h, Math.abs(o.z1 - o.z0) + 1];
+}
+function cloneObject(id, n = state.clone.n, dirName = state.clone.dir, gap = state.clone.gap) {
+  const f = findObject(id);
+  if (!f) return;
+  const d = state.design;
+  const dir = CLONE_DIRS[dirName];
+  const size = objectSize(f.kind, f.obj);
+  const step = dir.map((v, i) => v * (size[i] + gap));
+  beginChange(null);
+  const made = [];
+  for (let k = 1; k <= n; k++) {
+    const c = JSON.parse(JSON.stringify(f.obj));
+    c.id = newId(d, { box: 'b', pillar: 'p', segment: 's' }[f.kind], new Set(made));
+    if (f.kind === 'box') c.name = 'Box ' + c.id.replace(/^b/, '');
+    if (f.kind === 'box' && step[1] > 0 && c.details) c.details.door = false; // upper floors: no doorway into thin air
+    if (f.kind === 'segment') { c.x0 += step[0] * k; c.x1 += step[0] * k; c.z0 += step[2] * k; c.z1 += step[2] * k; }
+    else { c.x += step[0] * k; c.z += step[2] * k; }
+    c.baseY += step[1] * k;
+    f.list.push(c);
+    made.push(c.id);
+  }
+  afterChange();
+  toast('Made ' + n + (n === 1 ? ' copy' : ' copies'), false, { label: 'Undo', run: undo });
+}
+function cloneBlocks(n = state.clone.n, dirName = state.clone.dir, gap = state.clone.gap) {
+  const cells = state.selectedBlocks;
+  const exs = cells.map(placedEdit);
+  if (!cells.length || exs.some((ex) => !ex)) return;
+  const dir = CLONE_DIRS[dirName];
+  const span = [0, 1, 2].map((i) => Math.max(...cells.map((c) => c[i])) - Math.min(...cells.map((c) => c[i])) + 1);
+  const step = dir.map((v, i) => v * (span[i] + gap));
+  const sel = [];
+  beginChange(null);
+  for (let k = 1; k <= n; k++) {
+    cells.forEach((c, j) => {
+      const t = [c[0] + step[0] * k, c[1] + step[1] * k, c[2] + step[2] * k];
+      if (t[1] < -64 || t[1] > 319) return;
+      removeEditAt(...t);
+      exs[j].list.push({ ...exs[j].edit, x: exs[j].edit.x + t[0] - c[0], y: exs[j].edit.y + t[1] - c[1], z: exs[j].edit.z + t[2] - c[2] });
+      sel.push(t);
+    });
+  }
+  afterChange();
+  // The copies become the selection, so Ctrl+D again keeps extending the run.
+  state.selectedBlocks = sel.slice(-cells.length);
+  if (viewer) viewer.setSelectedBlocks(state.selectedBlocks);
+  renderBlockProps();
+  toast('Copied ' + cells.length + (cells.length === 1 ? ' block ' : ' blocks ') + n + '×', false, { label: 'Undo', run: undo });
 }
 
 function buildField(f, field) {
@@ -642,6 +748,7 @@ function syncPropValues() {
   if (!f || !state.propsFor || $('propsBody').hidden) return;
   const active = document.activeElement;
   for (const group of SCHEMA[f.kind]) {
+    if (group.show) { const g = $('group-' + group.group.replace(/\W+/g, '-').toLowerCase()); if (g) g.hidden = !group.show(f.obj); }
     for (const field of group.fields) {
       const id = fieldId(field);
       const el = $(id);
@@ -746,7 +853,7 @@ function syncBlockSelection() {
 function blockLabel(cell) {
   const ex = placedEdit(cell);
   if (!ex) return '?';
-  const shape = { slab: 'slab', stair: 'stairs' }[ex.edit.shape] || ''; // full blocks: the name alone
+  const shape = { slab: 'slab', stair: 'stairs', pane: 'pane' }[ex.edit.shape] || ''; // full blocks: the name alone
   return (famName(ex.edit.mat) + ' ' + shape).trim();
 }
 function renderBlockProps() {
@@ -759,15 +866,16 @@ function renderBlockProps() {
   $('propsId').textContent = '';
   const rows = cells.slice(0, 12).map((c) => h('li', {},
     iconEl((placedEdit(c) || { edit: {} }).edit.mat, 20), h('span', { text: blockLabel(c) }), h('span', { class: 'n mono', text: c.join(', ') })));
-  const anyStair = cells.some((c) => { const ex = placedEdit(c); return ex && ex.edit.shape === 'stair'; });
+  const anyStair = cells.some((c) => { const ex = placedEdit(c); return ex && (ex.edit.shape === 'stair' || ex.edit.shape === 'pane'); });
   body.replaceChildren(
     h('ul', { class: 'legend block-list' }, rows, cells.length > 12 ? h('li', { class: 'empty', text: '+ ' + (cells.length - 12) + ' more' }) : null),
     h('p', { class: 'hint', text: 'Drag to move, or use the arrow keys (Shift = 5) and Page Up / Page Down. Shift+click adds more blocks. Delete removes them' + (anyStair ? ', R turns stairs.' : '.') }),
     h('div', { class: 'props-actions' },
       h('button', { class: 'btn small', type: 'button', id: 'block-up', text: 'Up ↑', title: 'Raise one block (Page Up)', onclick: () => nudgeBlocks(0, 1, 0) }),
       h('button', { class: 'btn small', type: 'button', id: 'block-down', text: 'Down ↓', title: 'Lower one block (Page Down)', onclick: () => nudgeBlocks(0, -1, 0) }),
-      anyStair ? h('button', { class: 'btn small', type: 'button', id: 'block-rotate', text: 'Turn stairs', onclick: () => rotateSelectedBlocks() }) : null,
-      h('button', { class: 'btn danger small', type: 'button', id: 'block-delete', text: cells.length === 1 ? 'Delete' : 'Delete ' + cells.length, onclick: () => deleteSelectedBlocks() })));
+      anyStair ? h('button', { class: 'btn small', type: 'button', id: 'block-rotate', text: 'Turn', title: 'Turn stairs and panes (R)', onclick: () => rotateSelectedBlocks() }) : null,
+      h('button', { class: 'btn danger small', type: 'button', id: 'block-delete', text: cells.length === 1 ? 'Delete' : 'Delete ' + cells.length, onclick: () => deleteSelectedBlocks() })),
+    clonePanel(() => cloneBlocks()));
 }
 function deleteSelectedBlocks() {
   const cells = state.selectedBlocks.filter((c) => placedEdit(c));
@@ -827,10 +935,13 @@ function endBlockDrag() {
 }
 function rotateSelectedBlocks() {
   const turn = { north: 'east', east: 'south', south: 'west', west: 'north' };
-  const stairs = state.selectedBlocks.map(placedEdit).filter((ex) => ex && ex.edit.shape === 'stair');
+  const stairs = state.selectedBlocks.map(placedEdit).filter((ex) => ex && (ex.edit.shape === 'stair' || ex.edit.shape === 'pane'));
   if (!stairs.length) return;
   beginChange('turn-blocks');
-  for (const ex of stairs) ex.edit.facing = turn[ex.edit.facing] || 'north';
+  for (const ex of stairs) {
+    if (ex.edit.shape === 'pane') ex.edit.axis = ex.edit.axis === 'x' ? 'z' : 'x';
+    else ex.edit.facing = turn[ex.edit.facing] || 'north';
+  }
   afterChange();
 }
 
@@ -850,14 +961,14 @@ function deleteObject(id) {
 }
 // ------------------------------------------------------------------ tools: paint / place / erase
 const TOOL_HINTS = {
-  paint: 'Click a wall or roof to repaint it · One block repaints just that block · Shift+drag paints a stroke · Alt+click picks up a material · drag to orbit',
-  place: 'Click a block face (or the ground) to place · Stairs face the way you look · Shift+drag places a row · Alt+click picks up a material · drag to orbit',
-  erase: 'Click a block to remove it · Shift+drag erases a stroke · drag to orbit',
+  paint: 'Click a wall or roof to repaint it · One block repaints just that block · Shift+drag paints a stroke · Alt+click picks up a material · drag or middle-drag to orbit, right-drag to pan',
+  place: 'Click a block face (or the ground) to place · Stairs face the way you look · Shift+drag places a row · Alt+click picks up a material · drag or middle-drag to orbit, right-drag to pan',
+  erase: 'Click a block to remove it · Shift+drag erases a stroke · drag or middle-drag to orbit, right-drag to pan',
 };
 const AREA_HINTS = {
-  paint: 'Drag a rectangle to repaint every block on that layer · click for one block · right-drag to orbit',
-  place: 'Drag a rectangle to fill a floor on that layer · click for one block · right-drag to orbit',
-  erase: 'Drag a rectangle to clear every block on that layer · click for one block · right-drag to orbit',
+  paint: 'Drag a rectangle to repaint every block on that layer · click for one block · middle-drag to orbit',
+  place: 'Drag a rectangle to fill a floor on that layer · click for one block · middle-drag to orbit',
+  erase: 'Drag a rectangle to clear every block on that layer · click for one block · middle-drag to orbit',
 };
 const AREA_MAX = 128 * 128;
 const toolOpts = () => ({ shape: state.shape, area: state.area });
@@ -874,14 +985,14 @@ function setArea(on) {
 function areaAction(r, info) {
   const g = state.grid;
   if (!g || state.tool === 'select') return;
-  const x0 = Math.min(r.x0, r.x1), x1 = Math.max(r.x0, r.x1), z0 = Math.min(r.z0, r.z1), z1 = Math.max(r.z0, r.z1), y = r.y;
-  if ((x1 - x0 + 1) * (z1 - z0 + 1) > AREA_MAX) { toast('That area is too big (128 × 128 max)', true); return; }
-  if (y < -64 || y > 319) return;
+  const x0 = Math.min(r.x0, r.x1), x1 = Math.max(r.x0, r.x1), z0 = Math.min(r.z0, r.z1), z1 = Math.max(r.z0, r.z1);
+  const y0 = Math.max(-64, Math.min(r.y0, r.y1)), y1 = Math.min(319, Math.max(r.y0, r.y1));
+  if ((x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1) > AREA_MAX) { toast('That area is too big (128 × 128 max)', true); return; }
   const brush = state.brush;
   const start = info && info.cell && g.blocks.get(blockKey(...info.cell));
   const owner = ownerBox(start ? start.src : null);
   const runs = [];
-  for (let z = z0; z <= z1; z++) {
+  for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) {
     for (let x = x0; x <= x1; x++) {
       const at = g.blocks.get(blockKey(x, y, z));
       if (state.tool === 'place') {
@@ -890,6 +1001,7 @@ function areaAction(r, info) {
         if (state.shape === 'slab' || state.shape === 'stair') edit.half = (info && info.half) || 'bottom';
         if (state.shape === 'stair') edit.facing = info && !info.fromPlan && info.facing ? info.facing : state.planFacing;
         if (state.shape === 'full' && FAMILIES[brush].axis) edit.axis = 'y';
+        if (state.shape === 'pane') edit.axis = paneAxis(info || {});
         runs.push(() => putEdit(edit, owner));
       } else if (state.tool === 'erase') {
         if (!at) continue;
@@ -985,7 +1097,7 @@ function ownerBox(srcId) {
   const f = srcId ? findObject(srcId) : null;
   return f && f.kind === 'box' ? f.obj : null;
 }
-const PART_NAMES = { wallMaterial: 'walls', 'roof.material': 'roof', 'details.trimMat': 'trim', 'details.cornerMat': 'corner posts', 'details.beamMat': 'beams', 'details.baseMat': 'foundation', 'details.windowMat': 'windows', material: '' };
+const PART_NAMES = { wallMaterial: 'walls', 'roof.material': 'roof', 'details.trimMat': 'trim', 'details.cornerMat': 'corner posts', 'details.beamMat': 'beams', 'details.baseMat': 'foundation', 'details.windowMat': 'windows', 'details.frameMat': 'frames', 'details.sillMat': 'sills', baseMat: 'base', capMat: 'capital', material: '' };
 function blockAction(info, mods = {}) {
   const g = state.grid;
   if (!g || !info) return;
@@ -1019,6 +1131,7 @@ function blockAction(info, mods = {}) {
     if (state.shape === 'slab' || state.shape === 'stair') edit.half = info.half || 'bottom';
     if (state.shape === 'stair') edit.facing = info.fromPlan ? state.planFacing : info.facing;
     if (state.shape === 'full' && FAMILIES[state.brush].axis) edit.axis = info.normal[0] ? 'x' : info.normal[2] ? 'z' : 'y';
+    if (state.shape === 'pane') edit.axis = paneAxis(info);
     run = () => putEdit(edit, ownerBox(at ? at.src : null));
   } else if (state.tool === 'erase') {
     if (!at) return;
@@ -1035,6 +1148,14 @@ function blockAction(info, mods = {}) {
   syncPropValues();
   updateToolbar();
   if (msg && !mods.stroke) toast(msg, false, { label: 'Undo', run: undo });
+}
+/** A pane runs along the wall you click, or across your view when placed on the ground. */
+function paneAxis(info) {
+  const n = info.normal || [0, 1, 0];
+  if (n[0]) return 'z';
+  if (n[2]) return 'x';
+  const f = info.fromPlan || !info.facing ? state.planFacing : info.facing;
+  return f === 'north' || f === 'south' ? 'x' : 'z';
 }
 function clearEdits() {
   const n = countEdits();
@@ -1089,7 +1210,7 @@ function onPlanUp(e) {
   if (!d) return;
   if (d.a.x === d.b.x && d.a.z === d.b.z) { onPlanClick(e, d.a, d.alt); return; }
   renderPlan();
-  areaAction({ x0: d.a.x, z0: d.a.z, x1: d.b.x, z1: d.b.z, y: state.currentLayer }, { fromPlan: true, half: 'bottom' });
+  areaAction({ x0: d.a.x, z0: d.a.z, x1: d.b.x, z1: d.b.z, y0: state.currentLayer, y1: state.currentLayer }, { fromPlan: true, half: 'bottom' });
 }
 function onPlanClick(e, c, alt) {
   const { x, z } = c;
@@ -1719,6 +1840,12 @@ function onKeyDown(e) {
   const k = e.key.toLowerCase();
   if (mod && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
   if (mod && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
+  if (k === 'd' && mod && (state.selectedBlocks.length || state.selectedId)) {
+    // Ctrl+D: one copy in the clone panel's direction (Firefox's bookmark shortcut is overridden).
+    e.preventDefault();
+    if (state.selectedBlocks.length) cloneBlocks(1); else if (state.selectedId) cloneObject(state.selectedId, 1);
+    return;
+  }
   if (mod) return;
   if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedBlocks.length && !state.selectedId) { e.preventDefault(); deleteSelectedBlocks(); return; }
   if (k === 'r' && state.selectedBlocks.length && !state.selectedId && state.tool === 'select') { e.preventDefault(); rotateSelectedBlocks(); return; }
