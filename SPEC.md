@@ -297,3 +297,10 @@ Page contract (the artifact host wraps the file in its own doctype/head/body): w
   `design.edits` use world cells; `box.edits` are relative to `(box.x, box.baseY, box.z)` so they move
   with the box, and `rotatePatch` turns them (cells, stair facing, log axis) with it. Applied last, in order
   box edits then design edits; one edit per cell (the last wins). Stair shapes are recomputed afterwards.
+- **Irimoya** (`type: "irimoya"`): `dAlong >= clip` → gable `E + slope(dAcross)`; else hip `E + slope(min(dAcross, dAlong))`.
+  `clip` is the depth of the hip skirt on the ends; the gable face stands on it.
+- **Upturned corners** (`roof.upturn` 0–16 blocks, `roof.upturnReach` 1–64, default 6), for gable, hip, halfhip,
+  irimoya, gambrel, mansard: surface += upturn·(1 − a/reach)² for a < reach, a = max(dX, dZ) (Chebyshev distance to
+  the nearest region corner, ≥ 0 so off-region neighbours hold the full lift).
+- **Multi-box fill**: a column's fill depth and the seal pass follow only the column's own box. A lower roof of
+  another box next door no longer drags a tower's roof edge down into a curtain over its walls.

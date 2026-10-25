@@ -20,7 +20,7 @@ a big roof makes a dormer. Output: a 3D preview, layer-by-layer build plans, a m
 `.litematic` / `.schem` schematics.
 
 Also: every building block (332, from planks to glazed terracotta, leaves and glass), curved roofs
-(rounded / flared pagoda / bell) and round domes, cones and spires, style presets you can save,
+(rounded / flared pagoda / bell), Japanese irimoya roofs and upturned eave corners, round domes, cones and spires, style presets you can save,
 and one-click details (roof trim, ridge, corner posts, eave beams, foundation course, glass-pane windows).
 
 Static files only. No build tooling, no server code.
@@ -57,9 +57,16 @@ No build step is needed to develop: serve the folder with any static web server
 ## Using it
 
 - **Boxes** are footprints. Click one in the list or in the 3D view, drag it to move, drag the
-  edge handles to resize, drag the round corner handle to rotate in 90° steps (or press R /
-  Shift+R, or the Rotate button), or type exact numbers in Properties. Wall segments rotate too.
-- **Roof types**: flat, shed, gable, hip, half-hip (jerkinhead), gambrel, mansard. Pitch is rise per
+  edge handles to resize (hold Shift to keep it square), drag the round corner handle to rotate in
+  90° steps (or press R / Shift+R, or the Rotate button), or type exact numbers in Properties. Wall
+  segments rotate too.
+- **Move arrows**: a selected box, pillar or wall segment shows red (x), green (up/down) and blue (z)
+  arrows. Drag one to move along just that axis; the green one lifts the box, e.g. to sit a tower or
+  spire on top of another roof. Keys: arrows move, Page Up / Page Down raise and lower (Shift = 5).
+- **Roof types**: flat, shed, gable, hip, half-hip (jerkinhead), irimoya (Japanese hip-and-gable:
+  a hip skirt on the ends with a gable standing on it), gambrel, mansard, round. **Upturned corners**
+  curl the eaves up into each corner (lift in blocks + how far along the eave the curl reaches); try it
+  with the Japanese preset. Pitch is rise per
   block of run: 0.5 (slabs), 1 (stairs), 1.5, 2 (block + stair), 3. Overhang, ridge cap
   (block / slab / wall), and under-eave soffit stairs are per box.
 - **Tools** (bar at the bottom of the 3D view): **Select** (V) moves and edits objects. **Paint** (B)

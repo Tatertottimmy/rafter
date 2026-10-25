@@ -642,3 +642,35 @@ test('variation: deterministic, roughly tracks the amount, only main materials',
   assert.equal(g1.blocks.size, buildGrid(design([{ ...b, variation: { wall: 0 } }])).blocks.size, 'variation never adds or removes blocks');
   assert.deepEqual(suggestVariants('cobblestone'), ['mossy_cobblestone']);
 });
+
+test('upturned corners lift the eave toward each corner; irimoya is hip below, gable above', () => {
+  const top = (g) => { const t = new Map(); for (const [k, b] of g.blocks) { if (b.role !== 'roof') continue; const [x, y, z] = k.split(',').map(Number); t.set(x + ',' + z, Math.max(t.get(x + ',' + z) ?? -99, y)); } return t; };
+  const roof = { type: 'hip', rise: 1, overhang: 0 };
+  const flat = top(buildGrid(design([box({ w: 13, d: 9, roof })])));
+  const up = top(buildGrid(design([box({ w: 13, d: 9, roof: { ...roof, upturn: 3, upturnReach: 4 } })])));
+  assert.equal(up.get('0,0') - flat.get('0,0'), 3, 'corner rises by the full lift');
+  assert.ok(up.get('0,0') > up.get('1,0') && up.get('1,0') >= up.get('3,0'), 'eave climbs toward the corner');
+  assert.equal(up.get('6,0'), flat.get('6,0'), 'middle of the eave is untouched');
+  assert.equal(up.get('6,4'), flat.get('6,4'), 'ridge is untouched');
+  // flat and round roofs ignore it
+  const fl = buildGrid(design([box({ w: 7, d: 7, roof: { type: 'flat', upturn: 3 } })]));
+  assert.equal(fl.blocks.size, buildGrid(design([box({ w: 7, d: 7, roof: { type: 'flat' } })])).blocks.size);
+  // irimoya: ends rise as a hip for `clip` rows, then a gable face stands on the skirt
+  const iri = top(buildGrid(design([box({ w: 13, d: 9, roof: { type: 'irimoya', axis: 'x', rise: 1, clip: 3, overhang: 0 } })])));
+  const gab = top(buildGrid(design([box({ w: 13, d: 9, roof: { type: 'gable', axis: 'x', rise: 1, overhang: 0 } })])));
+  assert.ok(iri.get('0,4') < gab.get('0,4'), 'end of the ridge is hipped');
+  assert.equal(iri.get('3,4'), gab.get('3,4'), 'past the skirt it is a full gable');
+  assert.equal(validateDesign({ boxes: [{ roof: { type: 'irimoya', upturn: 99 } }] }).boxes[0].roof.upturn, 16);
+});
+
+test('a tower rising out of a lower roof keeps its walls (no roof curtain down to the other roof)', () => {
+  const main = box({ id: 'b1', w: 15, d: 15, roof: { type: 'gable', axis: 'x', rise: 1, overhang: 1 } });
+  const tower = box({ id: 'b2', x: 5, z: 5, w: 5, d: 5, wallH: 16, wallMaterial: 'oak_planks', roof: { type: 'round', rise: 2, overhang: 1, material: 'spruce' } });
+  const g = buildGrid(design([main, tower]));
+  // the tower's overhang ring hangs a couple of blocks below its eave, never down to the main roof
+  for (let y = 0; y < tower.baseY + tower.wallH - 3; y++) {
+    const b = get(g, 4, y, 7);
+    assert.ok(!b || b.src !== 'b2', `tower roof block at y=${y} in the overhang column`);
+  }
+  assert.equal(get(g, 5, 15, 7).role, 'wall', 'tower wall shows above the main roof');
+});

@@ -701,10 +701,12 @@ export class Viewer {
         this.handles.push(h);
       }
       this._addRotateHandle(obj, 'box', obj.x - oh, obj.z - oh, E, accent, solid);
+      this._addMoveGizmo(obj, obj.x + obj.w / 2, obj.baseY + Math.max(1, obj.wallH) / 2, obj.z + obj.d / 2);
     } else if (type === 'pillar') {
       const l = this._rectLine(obj.x, obj.z, obj.x + 1, obj.z + 1, obj.baseY + 0.02, solid); l.renderOrder = 10;
       const t = this._rectLine(obj.x, obj.z, obj.x + 1, obj.z + 1, obj.baseY + Math.max(1, obj.h) + 0.02, solid); t.renderOrder = 10;
       this.selGroup.add(l, t);
+      this._addMoveGizmo(obj, obj.x + 0.5, obj.baseY + Math.max(1, obj.h) / 2, obj.z + 0.5);
     } else if (type === 'segment') {
       const x0 = Math.min(obj.x0, obj.x1), x1 = Math.max(obj.x0, obj.x1) + 1;
       const z0 = Math.min(obj.z0, obj.z1), z1 = Math.max(obj.z0, obj.z1) + 1;
@@ -712,7 +714,67 @@ export class Viewer {
       const t = this._rectLine(x0, z0, x1, z1, obj.baseY + Math.max(1, obj.h) + 0.02, solid); t.renderOrder = 10;
       this.selGroup.add(l, t);
       this._addRotateHandle(obj, 'segment', x0, z0, obj.baseY + Math.max(1, obj.h), accent, solid);
+      this._addMoveGizmo(obj, (x0 + x1) / 2, obj.baseY + Math.max(1, obj.h) / 2, (z0 + z1) / 2);
     }
+  }
+
+  /**
+   * KSP-style translate gizmo: red x (east), green y (up), blue z (south) arrows from the
+   * object's centre. Drawn on top of everything so it shows through walls and roofs.
+   */
+  _addMoveGizmo(obj, cx, cy, cz) {
+    const len = 2.6;
+    const axes = [
+      ['x', 0xe5484d, new THREE.Vector3(1, 0, 0)],
+      ['y', 0x46a758, new THREE.Vector3(0, 1, 0)],
+      ['z', 0x3e63dd, new THREE.Vector3(0, 0, 1)],
+    ];
+    const up = new THREE.Vector3(0, 1, 0);
+    const hub = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 10), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.95 }));
+    hub.position.set(cx, cy, cz); hub.renderOrder = 13;
+    this.selGroup.add(hub);
+    for (const [axis, color, dir] of axes) {
+      const mat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.95 });
+      const g = new THREE.Group();
+      g.position.set(cx, cy, cz);
+      g.quaternion.setFromUnitVectors(up, dir);
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, len, 10), mat);
+      shaft.position.y = len / 2;
+      const head = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.6, 16), mat);
+      head.position.y = len + 0.3;
+      shaft.renderOrder = head.renderOrder = 13;
+      // Invisible, generous hit target along the whole arrow.
+      const hit = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, len + 0.6, 8), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthTest: false, depthWrite: false }));
+      hit.position.y = (len + 0.6) / 2 + 0.2;
+      hit.userData = { type: 'axis', axis, id: obj.id, origin: [cx, cy, cz] };
+      g.add(shaft, head, hit);
+      this.selGroup.add(g);
+      this.handles.push(hit);
+    }
+  }
+
+  /** Pointer position along one gizmo axis (world units), for an axis drag. */
+  _axisParam(e, d) {
+    this._setNDC(e);
+    const [ox, oy, oz] = d.origin;
+    const o = new THREE.Vector3(ox, oy, oz);
+    let n;
+    if (d.axis === 'y') {
+      // Vertical plane through the axis, turned to face the camera.
+      n = new THREE.Vector3().subVectors(this.camera.position, o); n.y = 0;
+      if (n.lengthSq() < 1e-6) return null;
+      n.normalize();
+    } else {
+      // Plane containing the axis, tilted toward the camera (horizontal unless looking flat on).
+      const a = d.axis === 'x' ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
+      const view = new THREE.Vector3().subVectors(this.camera.position, o);
+      n = view.sub(a.clone().multiplyScalar(view.dot(a)));
+      if (n.lengthSq() < 1e-6) return null;
+      n.normalize();
+    }
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, o);
+    const p = this.raycaster.ray.intersectPlane(plane, new THREE.Vector3());
+    return p ? p[d.axis] : null;
   }
 
   /** Round rotate knob off the north-west corner (cx0, cz0) at height y, joined by a stalk. */
@@ -785,6 +847,21 @@ export class Viewer {
       return;
     }
     const hit = this._pick(e);
+    if (hit && hit.type === 'axis') {
+      const found = this._findObject(hit.id);
+      if (!found) return;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      const d = { mode: 'axis', axis: hit.axis, origin: hit.origin, id: hit.id, objType: found.type, start: { ...found.obj }, last: 0, changed: false, pointerId: e.pointerId };
+      d.t0 = this._axisParam(e, d);
+      if (d.t0 == null) return;
+      this._down = { x: e.clientX, y: e.clientY, hit };
+      this.controls.enabled = false;
+      try { this.renderer.domElement.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+      this.renderer.domElement.style.cursor = 'grabbing';
+      this._drag = d;
+      return;
+    }
     if (!hit || (hit.type !== 'handle' && hit.type !== 'rotate')) {
       // A hand-placed block is picked before the object it sits on; a click selects it,
       // a drag still orbits.
@@ -882,6 +959,21 @@ export class Viewer {
     const d = this._drag;
     if (!d) return;
     e.stopImmediatePropagation();
+    if (d.mode === 'axis') {
+      const t = this._axisParam(e, d);
+      if (t == null) return;
+      const n = Math.round(t - d.t0);
+      if (n === d.last) return;
+      d.last = n;
+      d.changed = true;
+      const s = d.start;
+      let patch;
+      if (d.axis === 'y') patch = { baseY: s.baseY + n };
+      else if (d.objType === 'segment') patch = d.axis === 'x' ? { x0: s.x0 + n, x1: s.x1 + n } : { z0: s.z0 + n, z1: s.z1 + n };
+      else patch = d.axis === 'x' ? { x: s.x + n } : { z: s.z + n };
+      if (this.cb.onMove) this.cb.onMove(d.id, patch);
+      return;
+    }
     const p = this._planePoint(e, d.planeY);
     if (!p) return;
     if (d.mode === 'rotate') {
@@ -896,8 +988,8 @@ export class Viewer {
       return;
     }
     const dx = Math.round(p.x - d.p0.x), dz = Math.round(p.z - d.p0.z);
-    if (dx === d.lastDx && dz === d.lastDz) return;
-    d.lastDx = dx; d.lastDz = dz;
+    if (dx === d.lastDx && dz === d.lastDz && !!e.shiftKey === !!d.lastShift) return;
+    d.lastDx = dx; d.lastDz = dz; d.lastShift = e.shiftKey;
     d.changed = true;
     const s = d.start;
     if (d.mode === 'move') {
@@ -912,6 +1004,13 @@ export class Viewer {
         case 'west': { const nx = Math.min(s.x + dx, s.x + s.w - 1); w = s.x + s.w - nx; x = nx; break; }
         case 'south': dd = Math.max(1, s.d + dz); break;
         case 'north': { const nz = Math.min(s.z + dz, s.z + s.d - 1); dd = s.z + s.d - nz; z = nz; break; }
+      }
+      // Shift: keep the footprint square. The side being dragged sets the size; the other
+      // axis grows from its north / west edge.
+      if (e.shiftKey && d.objType === 'box') {
+        if (d.dir === 'east' || d.dir === 'west') dd = w; else w = dd;
+        z = d.dir === 'north' ? z : s.z;
+        x = d.dir === 'west' ? x : s.x;
       }
       if (this.cb.onResize) this.cb.onResize(d.id, { x, z, w, d: dd });
     }

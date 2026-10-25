@@ -1,6 +1,6 @@
 // app.js — Rafter UI: state, panels, wiring, persistence, downloads. (UI owns)
 import { FAMILIES, roofFamilies, fullFamilies, GROUP_ORDER } from './blocks.js';
-import { buildGrid, defaultDesign, materialTotals, newId, validateDesign, rotatePatch, suggestVariants, blockKey, DETAIL_DEFAULTS, VARIATION_DEFAULTS } from './engine.js';
+import { buildGrid, defaultDesign, materialTotals, newId, validateDesign, rotatePatch, suggestVariants, blockKey, DETAIL_DEFAULTS, VARIATION_DEFAULTS, UPTURN_TYPES } from './engine.js';
 import { encodeLitematic, encodeSchem } from './export.js';
 import { swatchDataURL, familyIcon } from './textures.js';
 import { drawLayer, layerLegend, layerRange } from './plans.js';
@@ -20,7 +20,7 @@ const RISE_OPTIONS = [
 ];
 const ROOF_TYPES = [
   ['flat', 'Flat'], ['shed', 'Shed (single slope)'], ['gable', 'Gable'], ['hip', 'Hip'],
-  ['halfhip', 'Half-hip (clipped gable)'], ['gambrel', 'Gambrel (barn)'], ['mansard', 'Mansard'],
+  ['halfhip', 'Half-hip (clipped gable)'], ['irimoya', 'Irimoya (Japanese hip-and-gable)'], ['gambrel', 'Gambrel (barn)'], ['mansard', 'Mansard'],
   ['round', 'Round (dome / cone / spire)'],
 ];
 const PROFILE_OPTIONS = [
@@ -418,12 +418,15 @@ function renderObjectList() {
 // ------------------------------------------------------------------ properties editor
 // Field schema. `path` is the key path within the object; `show(obj)` toggles visibility.
 const ROOF_SHOW = {
-  axis: (o) => ['gable', 'halfhip', 'gambrel'].includes(o.roof.type),
+  axis: (o) => ['gable', 'halfhip', 'irimoya', 'gambrel'].includes(o.roof.type),
   shedLow: (o) => o.roof.type === 'shed',
   rise: (o) => o.roof.type !== 'flat',
   rise2: (o) => ['gambrel', 'mansard'].includes(o.roof.type),
   breakAt: (o) => ['gambrel', 'mansard'].includes(o.roof.type),
   clip: (o) => o.roof.type === 'halfhip',
+  skirt: (o) => o.roof.type === 'irimoya',
+  upturn: (o) => UPTURN_TYPES.includes(o.roof.type),
+  upturnReach: (o) => UPTURN_TYPES.includes(o.roof.type) && o.roof.upturn > 0,
   ridgeCap: (o) => !['flat', 'shed'].includes(o.roof.type),
   soffit: (o) => o.roof.type !== 'flat' && o.roof.overhang >= 1,
   profile: (o) => !['flat', 'gambrel', 'mansard'].includes(o.roof.type),
@@ -457,6 +460,9 @@ const SCHEMA = {
       { path: ['roof', 'breakAt'], label: 'Break after (blocks of run)', type: 'int', min: 1, show: ROOF_SHOW.breakAt },
       { path: ['roof', 'rise2'], label: 'Pitch after break', type: 'select', options: RISE_OPTIONS, numeric: true, show: ROOF_SHOW.rise2 },
       { path: ['roof', 'clip'], label: 'Clip (blocks above eave)', type: 'int', min: 0, show: ROOF_SHOW.clip },
+      { path: ['roof', 'clip'], key: 'roof-skirt', label: 'Hip skirt depth (blocks)', type: 'int', min: 0, show: ROOF_SHOW.skirt },
+      { path: ['roof', 'upturn'], label: 'Upturned corners (blocks of lift)', type: 'int', min: 0, max: 16, show: ROOF_SHOW.upturn },
+      { path: ['roof', 'upturnReach'], label: 'Corner curl length', type: 'int', min: 1, max: 64, show: ROOF_SHOW.upturnReach },
       { path: ['roof', 'overhang'], label: 'Overhang', type: 'int', min: 0 },
       { path: ['roof', 'ridgeCap'], label: 'Ridge cap', type: 'select', options: [['block', 'Full block'], ['slab', 'Slab'], ['wall', 'Wall (if the family has one)']], show: ROOF_SHOW.ridgeCap },
       { path: ['roof', 'soffit'], label: 'Soffit (upside-down stairs under the eave)', type: 'check', show: ROOF_SHOW.soffit, wide: true },
@@ -510,7 +516,7 @@ const SCHEMA = {
 };
 const getPath = (o, path) => path.reduce((a, k) => (a == null ? undefined : a[k]), o);
 const setPath = (o, path, v) => { let a = o; for (let i = 0; i < path.length - 1; i++) a = a[path[i]]; a[path[path.length - 1]] = v; };
-const fieldId = (field) => 'prop-' + field.path.join('-');
+const fieldId = (field) => 'prop-' + (field.key || field.path.join('-')); // key: two fields sharing one path
 
 function renderProps(valuesOnly = false) {
   const f = findObject(state.selectedId);
@@ -1021,12 +1027,13 @@ function rotateSelected(q) {
   renderProps(true);
 }
 
-function nudge(dx, dz) {
+function nudge(dx, dz, dy = 0) {
   const f = findObject(state.selectedId);
   if (!f) return;
   beginChange('nudge:' + f.obj.id);
   if (f.kind === 'segment') { f.obj.x0 += dx; f.obj.x1 += dx; f.obj.z0 += dz; f.obj.z1 += dz; }
   else { f.obj.x += dx; f.obj.z += dz; }
+  f.obj.baseY += dy;
   afterChange();
   syncPropValues();
 }
@@ -1082,7 +1089,7 @@ const BUILTIN_PRESETS = [
     details: D({ trim: true, corners: true, base: true, windows: true, trimMat: 'dark_oak', cornerMat: 'spruce_log', baseMat: 'cobblestone', windowMat: 'glass' }) },
   { name: 'Tudor', roof: 'dark_oak', wall: 'calcite', pillar: 'dark_oak_log', segment: 'cobblestone', profile: 'straight',
     details: D({ trim: true, ridge: true, corners: true, beams: true, base: true, windows: true, trimMat: 'spruce', cornerMat: 'dark_oak_log', beamMat: 'stripped_dark_oak_log', baseMat: 'cobblestone', windowMat: 'glass' }) },
-  { name: 'Japanese', roof: 'deepslate_tiles', wall: 'white_terracotta', pillar: 'dark_oak_log', segment: 'polished_andesite', profile: 'flared', variation: { roof: 15, style: 'scatter' },
+  { name: 'Japanese', roof: 'deepslate_tiles', wall: 'white_terracotta', pillar: 'dark_oak_log', segment: 'polished_andesite', profile: 'flared', upturn: 2, upturnReach: 6, variation: { roof: 15, style: 'scatter' },
     details: D({ trim: true, ridge: true, corners: true, beams: true, base: true, windows: true, trimMat: 'dark_oak', cornerMat: 'dark_oak_log', beamMat: 'stripped_dark_oak_log', baseMat: 'polished_andesite', windowMat: 'white_stained_glass' }) },
   { name: 'Desert', roof: 'smooth_sandstone', wall: 'sandstone', pillar: 'chiseled_sandstone', segment: 'smooth_sandstone', profile: 'straight', variation: { wall: 20, style: 'streaks' },
     details: D({ trim: true, corners: true, base: true, windows: true, trimMat: 'smooth_red_sandstone', cornerMat: 'chiseled_sandstone', baseMat: 'smooth_sandstone', windowMat: 'orange_stained_glass' }) },
@@ -1117,6 +1124,8 @@ function presetFromDesign(name) {
     pillar: d.pillars[0] ? d.pillars[0].material : 'oak_log',
     segment: d.segments[0] ? d.segments[0].material : 'cobblestone',
     profile: b ? b.roof.profile : 'straight',
+    upturn: b ? b.roof.upturn : 0,
+    upturnReach: b ? b.roof.upturnReach : 6,
     details: D(b ? b.details : {}),
     variation: b && b.variation ? { ...b.variation } : null,
   };
@@ -1129,6 +1138,8 @@ function applyPreset(p) {
     b.roof.material = ok(p.roof, b.roof.material);
     b.wallMaterial = ok(p.wall, b.wallMaterial);
     if (p.profile) b.roof.profile = p.profile;
+    b.roof.upturn = p.upturn || 0; // like variation: presets without it switch it off
+    if (p.upturnReach) b.roof.upturnReach = p.upturnReach;
     const det = D(p.details);
     for (const [k, v] of Object.entries(DETAIL_DEFAULTS)) if (typeof v === 'string') det[k] = ok(det[k], v);
     b.details = det;
@@ -1146,7 +1157,7 @@ function applyPreset(p) {
 function presetRow(p, userIndex) {
   const mats = [p.roof, p.wall, p.details && p.details.trimMat, p.details && p.details.cornerMat, p.details && p.details.baseMat].filter((k) => FAMILIES[k]);
   const on = Object.entries(p.details || {}).filter(([, v]) => v === true).map(([k]) => k);
-  const meta = (p.profile && p.profile !== 'straight' ? p.profile + ' roof · ' : '') + (on.length ? on.join(', ') : 'no details');
+  const meta = (p.profile && p.profile !== 'straight' ? p.profile + ' roof · ' : '') + (p.upturn ? 'upturned corners · ' : '') + (on.length ? on.join(', ') : 'no details');
   const apply = h('button', { class: 'preset', type: 'button', id: 'preset-' + (userIndex == null ? 'b-' : 'u-') + slug(p.name), title: 'Apply ' + p.name + ' to the whole design' },
     h('span', { class: 'preset-icons' }, mats.map((k) => iconEl(k, 22))),
     h('span', { class: 'preset-text' }, h('span', { class: 'preset-name', text: p.name }), h('span', { class: 'preset-meta', text: meta })));
@@ -1633,6 +1644,11 @@ function onKeyDown(e) {
     else if (e.key === 'ArrowDown') nudge(0, step);
     else if (e.key === 'ArrowLeft') nudge(-step, 0);
     else if (e.key === 'ArrowRight') nudge(step, 0);
+    return;
+  }
+  if ((e.key === 'PageUp' || e.key === 'PageDown') && state.selectedId) {
+    e.preventDefault();
+    nudge(0, 0, (e.key === 'PageUp' ? 1 : -1) * (e.shiftKey ? 5 : 1));
     return;
   }
   if (e.key === 'Escape' && state.tool !== 'select') { setTool('select'); return; }

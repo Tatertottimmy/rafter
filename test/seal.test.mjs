@@ -49,3 +49,15 @@ test('roofs are sealed: no see-through gaps for any type, curve or pitch', () =>
             assert.deepEqual(holes(des).slice(0, 3), [], `${type}/${profile}/r${rise}/${w}x${d}/oh${overhang}`);
           }
 });
+
+test('irimoya and upturned corners stay sealed', () => {
+  for (const type of ['irimoya', 'gable', 'hip', 'halfhip', 'gambrel', 'mansard'])
+    for (const profile of ['straight', 'flared'])
+      for (const rise of [0.5, 1, 2])
+        for (const [w, d] of [[7, 5], [9, 9], [13, 9]])
+          for (const [upturn, upturnReach] of [[0, 6], [2, 6], [4, 3]])
+            for (const overhang of [0, 2]) {
+              const des = box({ type, profile, rise, overhang, upturn, upturnReach, clip: 3, axis: w >= d ? 'x' : 'z' }, w, d);
+              assert.deepEqual(holes(des).slice(0, 3), [], `${type}/${profile}/r${rise}/${w}x${d}/up${upturn}x${upturnReach}/oh${overhang}`);
+            }
+});

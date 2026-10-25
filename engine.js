@@ -16,7 +16,9 @@ const CW = { north: 'east', east: 'south', south: 'west', west: 'north' };
 export function rotateYCCW(d) { return CCW[d]; }
 export function rotateYCW(d) { return CW[d]; }
 
-export const ROOF_TYPES = ['flat', 'shed', 'gable', 'hip', 'halfhip', 'gambrel', 'mansard', 'round'];
+export const ROOF_TYPES = ['flat', 'shed', 'gable', 'hip', 'halfhip', 'irimoya', 'gambrel', 'mansard', 'round'];
+// Upturned corners (Japanese / Chinese eaves): roof types the corner lift applies to.
+export const UPTURN_TYPES = ['gable', 'hip', 'halfhip', 'irimoya', 'gambrel', 'mansard'];
 // Slope profile (curved roofs). straight = the SPEC formulas; the others bend the same total
 // height (rise × run) along a curve. Ignored by flat, gambrel and mansard.
 export const ROOF_PROFILES = ['straight', 'rounded', 'flared', 'bell'];
@@ -133,6 +135,8 @@ export function validateDesign(design) {
     r.ridgeCap = oneOf(r.ridgeCap, RIDGE_CAPS, 'block');
     r.soffit = bool(r.soffit, false);
     r.profile = oneOf(r.profile, ROOF_PROFILES, 'straight');
+    r.upturn = int(r.upturn, 0, 0, 16);           // blocks the corners rise (0 = off)
+    r.upturnReach = int(r.upturnReach, 6, 1, 64); // how far along the eave the curl reaches
     // Any block can roof: families without slabs/stairs fall back to full blocks.
     r.material = familyKey(r.material, 'spruce', false);
     const det = b.details && typeof b.details === 'object' ? b.details : {};
@@ -468,8 +472,23 @@ export function slopeHeight(r, d, D) {
   return slope0 * d;
 }
 
+/**
+ * Corner lift: the surface warps up toward every corner of the region. a = Chebyshev distance
+ * to the nearest corner, so the eave line curves up into each corner and the hip lines follow.
+ * Off-region (a < 0) it holds the full lift so virtual neighbours don't keep climbing.
+ */
+function cornerLift(r, reg, cx, cz) {
+  if (!r.upturn || !UPTURN_TYPES.includes(r.type)) return 0;
+  const dX = Math.min(cx - reg.x0, reg.x1 - cx), dZ = Math.min(cz - reg.z0, reg.z1 - cz);
+  const t = Math.max(0, Math.max(dX, dZ)) / r.upturnReach;
+  return t >= 1 ? 0 : r.upturn * (1 - t) * (1 - t);
+}
+
 /** Surface height s_b(cx,cz) of one box at a column inside its region. */
 function boxSurface(b, reg, cx, cz) {
+  return baseSurface(b, reg, cx, cz) + cornerLift(b.roof, reg, cx, cz);
+}
+function baseSurface(b, reg, cx, cz) {
   const r = b.roof;
   const E = b.baseY + b.wallH;
   const dxW = cx - reg.x0, dxE = reg.x1 - cx, dzN = cz - reg.z0, dzS = reg.z1 - cz;
@@ -490,6 +509,12 @@ function boxSurface(b, reg, cx, cz) {
     case 'gable': return E + slopeHeight(r, dAcross, DAcross);
     case 'hip': return E + slopeHeight(r, Math.min(dX, dZ), Math.min(DX, DZ));
     case 'halfhip': return Math.min(E + slopeHeight(r, dAcross, DAcross), E + r.clip + slopeHeight(r, dAlong, DAlong));
+    case 'irimoya': {
+      // Hip-and-gable: a hip skirt `clip` blocks deep on the ends, then a gable whose
+      // triangle stands on the skirt. Past the skirt the roof is a plain gable.
+      if (dAlong >= r.clip) return E + slopeHeight(r, dAcross, DAcross);
+      return E + slopeHeight(r, Math.min(dAcross, dAlong), DAcross);
+    }
     case 'round': {
       // Dome / cone / spire on an ellipse inscribed in the region. Inside the region but
       // outside the ellipse (square corners) the roof stays at eave height.
@@ -607,13 +632,19 @@ export function buildGrid(input) {
     // stairs round its edge.
     const reg = regions[bi];
     const nb = {};
-    let sMin = Infinity;
+    let sMin = Infinity, fillMin = Infinity;
     for (const d of DIRS) {
       const [dx, dz] = DIR_OFFSET[d];
       const n = surface.get(colKey(cx + dx, cz + dz));
-      const v = n ? n.s : roundHalf(boxSurface(b, reg, cx + dx, cz + dz));
+      const own = roundHalf(boxSurface(b, reg, cx + dx, cz + dz));
+      const v = n ? n.s : own;
       nb[d] = v;
       if (v < sMin) sMin = v;
+      // Fill depth only follows this box's own slope: a lower roof of ANOTHER box next door
+      // (a tower rising out of a main roof) must not drag the fill down to it, or the
+      // tower turns into a solid column of roof blocks and its walls never show.
+      const fv = Math.max(v, own);
+      if (fv < fillMin) fillMin = fv;
     }
     const lowDirs = DIRS.filter((d) => nb[d] < s - EPS);
     const highDirs = DIRS.filter((d) => nb[d] > s + EPS);
@@ -638,7 +669,7 @@ export function buildGrid(input) {
         dec = { kind: 'stair', layer: topLayer, facing: OPPOSITE[lowest] };
       }
     }
-    dec.fillFrom = isHalf(sMin) ? Math.floor(sMin) : sMin;
+    dec.fillFrom = isHalf(fillMin) ? Math.floor(fillMin) : fillMin;
     dec.cx = cx; dec.cz = cz; dec.bi = bi;
     decisions.set(k, dec);
   }
@@ -735,6 +766,8 @@ export function buildGrid(input) {
       if (has(nx, y, nz)) continue;
       const low = roofMin.get(colKey(nx, nz));
       if (low === undefined || low <= y) continue;
+      // Only within one box: a tower next to a lower roof is open air there, not a gap.
+      if (blocks.get(blockKey(nx, low, nz)).src !== blk.src) continue;
       sealed.push([nx, y, nz, blocks.get(blockKey(nx, low, nz)), low]);
     }
   }
