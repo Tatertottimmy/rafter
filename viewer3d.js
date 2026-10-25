@@ -402,6 +402,8 @@ export class Viewer {
     this.tool = tool || 'select';
     this.toolOpts = opts || {};
     this.renderer.domElement.style.cursor = this.tool === 'select' ? '' : 'crosshair';
+    // Area mode: left-drag draws a rectangle, so orbit moves to the right button.
+    this.controls.mouseButtons.RIGHT = this._areaMode() ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
     this._hoverKey = null;
     this._setHover(this._hoverEvt && this.tool !== 'select' ? this.pickBlock(this._hoverEvt) : null);
   }
@@ -466,6 +468,27 @@ export class Viewer {
     if (!info || !info.cell) return null;
     const blk = this.grid.blocks.get(info.cell.join(','));
     return blk && blk.role === 'placed' ? info.cell : null;
+  }
+
+  _areaMode() { return !!(this.toolOpts && this.toolOpts.area) && this.tool !== 'select'; }
+
+  /** Translucent slab over the cells of an area drag (or nothing). */
+  _setAreaPreview(a) {
+    this._hoverKey = null;
+    this._clearGroup(this._hoverGroup);
+    if (a) {
+      const x0 = Math.min(a.anchor[0], a.cur[0]), x1 = Math.max(a.anchor[0], a.cur[0]) + 1;
+      const z0 = Math.min(a.anchor[2], a.cur[2]), z1 = Math.max(a.anchor[2], a.cur[2]) + 1;
+      const color = new THREE.Color(this.tool === 'erase' ? cssVar(this.container, '--danger', '#c0392b') : cssVar(this.container, '--accent', '#d9814a'));
+      const geo = new THREE.BoxGeometry(x1 - x0 + 0.02, 1.02, z1 - z0 + 0.02);
+      const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true }));
+      line.position.set((x0 + x1) / 2, a.y + 0.5, (z0 + z1) / 2);
+      line.renderOrder = 20;
+      const fill = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, depthWrite: false }));
+      fill.position.copy(line.position);
+      this._hoverGroup.add(line, fill);
+    }
+    this.requestRender();
   }
 
   _setHover(info) {
@@ -835,6 +858,22 @@ export class Viewer {
     if (e.button !== 0) { this._down = null; return; }
     if (this.tool !== 'select') {
       this._down = { x: e.clientX, y: e.clientY, hit: null, tool: true };
+      // Area mode: drag a rectangle on the layer of the block you start on.
+      if (this._areaMode() && !e.shiftKey) {
+        const info = this.pickBlock(e);
+        const anchor = info && (this.tool === 'place' ? info.place : info.cell);
+        if (anchor) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          this.controls.enabled = false;
+          try { this.renderer.domElement.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+          // Track the pointer on the layer's top face for erase/paint, its floor for place.
+          const planeY = this.tool === 'place' ? anchor[1] : anchor[1] + 1;
+          this._area = { anchor, cur: anchor, y: anchor[1], planeY, info, alt: e.altKey, pointerId: e.pointerId };
+          this._setAreaPreview(this._area);
+          return;
+        }
+      }
       // Shift+drag paints a stroke instead of orbiting.
       if (e.shiftKey) {
         e.stopImmediatePropagation();
@@ -932,6 +971,17 @@ export class Viewer {
   }
 
   _onPointerMove(e) {
+    const ar = this._area;
+    if (ar) {
+      e.stopImmediatePropagation();
+      const p = this._planePoint(e, ar.planeY);
+      if (!p) return;
+      const cur = [Math.floor(p.x), ar.y, Math.floor(p.z)];
+      if (cur[0] === ar.cur[0] && cur[2] === ar.cur[2]) return;
+      ar.cur = cur;
+      this._setAreaPreview(ar);
+      return;
+    }
     const bd = this._blockDrag;
     if (bd) {
       e.stopImmediatePropagation();
@@ -1017,6 +1067,20 @@ export class Viewer {
   }
 
   _onPointerUp(e) {
+    const ar = this._area;
+    if (ar) {
+      e.stopImmediatePropagation();
+      try { this.renderer.domElement.releasePointerCapture(ar.pointerId); } catch { /* ignore */ }
+      this._area = null;
+      this._down = null;
+      this.controls.enabled = true;
+      this._setAreaPreview(null);
+      if (e.type !== 'pointerup') return;
+      const same = ar.cur[0] === ar.anchor[0] && ar.cur[2] === ar.anchor[2];
+      if (same) { if (this.cb.onBlockClick) this.cb.onBlockClick(ar.info, { alt: ar.alt, shift: false }); }
+      else if (this.cb.onArea) this.cb.onArea({ x0: ar.anchor[0], z0: ar.anchor[2], x1: ar.cur[0], z1: ar.cur[2], y: ar.y }, ar.info);
+      return;
+    }
     const bd = this._blockDrag;
     if (bd) {
       e.stopImmediatePropagation();

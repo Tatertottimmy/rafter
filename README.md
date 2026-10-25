@@ -72,7 +72,9 @@ No build step is needed to develop: serve the folder with any static web server
 - **Tools** (bar at the bottom of the 3D view): **Select** (V) moves and edits objects. **Paint** (B)
   repaints the whole wall, roof, trim, post or foundation you click, or just one block in
   "One block" mode. **Place** (P) puts a block, slab or stairs against the face you click or on the
-  ground; stairs face the way you look, slabs go top or bottom by where you click. **Erase** (E)
+  ground; stairs face the way you look, slabs go top or bottom by where you click. **Area** (A) mode:
+  drag a rectangle to place a whole floor, erase or repaint every block on that layer in one step
+  (right-drag orbits while it is on). On the layer plan any drag works this way. **Erase** (E)
   removes blocks. Shift+drag paints, places or erases a stroke; Alt+click picks up a block's
   material. The layer plan takes clicks too, on the current layer. In **Select**, click a block
   you placed to select it (Shift+click for more). Drag them to move, or use the arrow keys

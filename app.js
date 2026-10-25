@@ -51,6 +51,7 @@ const state = {
   brush: 'stone_bricks',
   paintScope: 'part', // part = the whole wall/roof/trim the block belongs to; block = one block
   shape: 'full',
+  area: false,         // Place / Erase / Paint: drag a rectangle instead of single blocks
   planFacing: 'north', // stair facing for clicks on the layer plan (R turns it while placing stairs)
   rotAnchor: null, // { id, start, q, sig }: repeated rotations restart from `start` so odd sizes don't drift
 };
@@ -261,6 +262,7 @@ async function initViewer() {
       onResize: (id, patch) => liveEdit(id, patch),
       onRotate: (id, patch) => { state.rotAnchor = null; liveEdit(id, patch); },
       onBlockClick: (info, mods) => blockAction(info, mods),
+      onArea: (rect, info) => areaAction(rect, info),
       onSelectBlock: (cell, mods) => selectBlock(cell, mods),
       onMoveBlocks: (dx, dz) => dragBlocks(dx, dz),
       onMoveBlocksEnd: () => endBlockDrag(),
@@ -277,7 +279,7 @@ async function initViewer() {
     });
     viewer.setDesign(state.design);
     viewer.setGrid(state.grid);
-    viewer.setTool(state.tool, { shape: state.shape });
+    viewer.setTool(state.tool, toolOpts());
     viewer.setSelection(state.selectedId);
     applySlice();
     viewer.frameAll();
@@ -852,11 +854,70 @@ const TOOL_HINTS = {
   place: 'Click a block face (or the ground) to place · Stairs face the way you look · Shift+drag places a row · Alt+click picks up a material · drag to orbit',
   erase: 'Click a block to remove it · Shift+drag erases a stroke · drag to orbit',
 };
+const AREA_HINTS = {
+  paint: 'Drag a rectangle to repaint every block on that layer · click for one block · right-drag to orbit',
+  place: 'Drag a rectangle to fill a floor on that layer · click for one block · right-drag to orbit',
+  erase: 'Drag a rectangle to clear every block on that layer · click for one block · right-drag to orbit',
+};
+const AREA_MAX = 128 * 128;
+const toolOpts = () => ({ shape: state.shape, area: state.area });
+function setArea(on) {
+  state.area = !!on;
+  try { localStorage.setItem('rafter.area', state.area ? '1' : ''); } catch (e) { /* ignore */ }
+  if (viewer) viewer.setTool(state.tool, toolOpts());
+  updateToolbar();
+}
+/**
+ * Fill / clear / repaint every cell of a rectangle on one layer as one undo step.
+ * info is the block the drag started on (stair facing, half, owner box).
+ */
+function areaAction(r, info) {
+  const g = state.grid;
+  if (!g || state.tool === 'select') return;
+  const x0 = Math.min(r.x0, r.x1), x1 = Math.max(r.x0, r.x1), z0 = Math.min(r.z0, r.z1), z1 = Math.max(r.z0, r.z1), y = r.y;
+  if ((x1 - x0 + 1) * (z1 - z0 + 1) > AREA_MAX) { toast('That area is too big (128 × 128 max)', true); return; }
+  if (y < -64 || y > 319) return;
+  const brush = state.brush;
+  const start = info && info.cell && g.blocks.get(blockKey(...info.cell));
+  const owner = ownerBox(start ? start.src : null);
+  const runs = [];
+  for (let z = z0; z <= z1; z++) {
+    for (let x = x0; x <= x1; x++) {
+      const at = g.blocks.get(blockKey(x, y, z));
+      if (state.tool === 'place') {
+        if (at) continue;
+        const edit = { x, y, z, shape: state.shape, mat: brush };
+        if (state.shape === 'slab' || state.shape === 'stair') edit.half = (info && info.half) || 'bottom';
+        if (state.shape === 'stair') edit.facing = info && !info.fromPlan && info.facing ? info.facing : state.planFacing;
+        if (state.shape === 'full' && FAMILIES[brush].axis) edit.axis = 'y';
+        runs.push(() => putEdit(edit, owner));
+      } else if (state.tool === 'erase') {
+        if (!at) continue;
+        const ex = findEdit(x, y, z);
+        if (ex && ex.edit.shape !== 'erase' && ex.edit.shape !== 'paint') runs.push(() => { const e2 = findEdit(x, y, z); if (e2) e2.list.splice(e2.index, 1); });
+        else runs.push(() => putEdit({ x, y, z, shape: 'erase' }, ownerBox(at.src)));
+      } else if (state.tool === 'paint') {
+        if (!at || at.mat === brush) continue;
+        const ex = findEdit(x, y, z);
+        if (ex && ex.edit.shape !== 'erase' && ex.edit.shape !== 'paint') runs.push(() => { ex.edit.mat = brush; });
+        else runs.push(() => putEdit({ x, y, z, shape: 'paint', mat: brush }, ownerBox(at.src)));
+      }
+    }
+  }
+  if (!runs.length) return;
+  beginChange(null);
+  for (const run of runs) run();
+  afterChange();
+  syncPropValues();
+  updateToolbar();
+  const verb = { place: 'Placed', erase: 'Erased', paint: 'Repainted' }[state.tool];
+  toast(verb + ' ' + fmt(runs.length) + ' block' + (runs.length === 1 ? '' : 's'), false, { label: 'Undo', run: undo });
+}
 const STAIR_ARROWS = { north: '↑', east: '→', south: '↓', west: '←' };
 function setTool(tool) {
   state.tool = tool;
   if (tool !== 'select' && state.selectedBlocks.length) select(null);
-  if (viewer) viewer.setTool(tool, { shape: state.shape });
+  if (viewer) viewer.setTool(tool, toolOpts());
   updateToolbar();
   $('planCanvas').classList.toggle('tool', tool !== 'select');
   renderPlan();
@@ -881,6 +942,8 @@ function updateToolbar() {
   const t = state.tool;
   $('brushBtn').hidden = t !== 'paint' && t !== 'place';
   $('scopeSeg').hidden = t !== 'paint';
+  $('areaSeg').hidden = t === 'select';
+  for (const b of $('areaSeg').querySelectorAll('button')) b.setAttribute('aria-pressed', String((b.dataset.area === 'area') === state.area));
   $('shapeSeg').hidden = t !== 'place';
   const n = state.design ? countEdits() : 0;
   $('btnClearEdits').hidden = n === 0;
@@ -890,7 +953,7 @@ function updateToolbar() {
   $('brushBtn').querySelector('.mat-name').textContent = famName(state.brush);
   $('brushBtn').title = 'Brush material: ' + famName(state.brush);
   $('toolHint').hidden = t === 'select';
-  $('toolHint').textContent = TOOL_HINTS[t] || '';
+  $('toolHint').textContent = (state.area ? AREA_HINTS[t] : TOOL_HINTS[t]) || '';
 }
 /** Every edit list with the cell offset that turns its coordinates into world cells. */
 function editLists() {
@@ -983,18 +1046,56 @@ function clearEdits() {
   updateToolbar();
   toast('Cleared ' + fmt(n) + ' block edits', false, { label: 'Undo', run: undo });
 }
-function onPlanClick(e) {
-  if (state.tool === 'select' || !state.grid) return;
-  const c = $('planCanvas');
-  const r = c.getBoundingClientRect();
+function planCellAt(e) {
+  const r = $('planCanvas').getBoundingClientRect();
   const b = planBounds();
   const cell = planCellSize();
   const x = b.minX + Math.floor((e.clientX - r.left - 30) / cell);
   const z = b.minZ + Math.floor((e.clientY - r.top - 20) / cell);
-  if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) return;
+  return { x, z, inside: x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ };
+}
+// Layer plan: click acts on one cell, drag acts on the rectangle (any block tool).
+let planDrag = null;
+function onPlanDown(e) {
+  if (state.tool === 'select' || !state.grid || e.button !== 0) return;
+  const c = planCellAt(e);
+  if (!c.inside) return;
+  planDrag = { a: c, b: c, alt: e.altKey };
+  try { $('planCanvas').setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+}
+function onPlanMove(e) {
+  if (!planDrag) return;
+  const b = planBounds();
+  const c = planCellAt(e);
+  c.x = Math.max(b.minX, Math.min(b.maxX, c.x)); c.z = Math.max(b.minZ, Math.min(b.maxZ, c.z));
+  if (c.x === planDrag.b.x && c.z === planDrag.b.z) return;
+  planDrag.b = c;
+  renderPlan();
+  const ctx = $('planCanvas').getContext('2d'); // drawLayer leaves the DPR transform in place
+  const cell = planCellSize();
+  const x0 = Math.min(planDrag.a.x, c.x), x1 = Math.max(planDrag.a.x, c.x) + 1, z0 = Math.min(planDrag.a.z, c.z), z1 = Math.max(planDrag.a.z, c.z) + 1;
+  ctx.save();
+  ctx.fillStyle = state.tool === 'erase' ? 'rgba(192,57,43,0.25)' : 'rgba(217,129,74,0.3)';
+  ctx.strokeStyle = state.tool === 'erase' ? '#c0392b' : '#d9814a';
+  ctx.lineWidth = 2;
+  const px = 30 + (x0 - b.minX) * cell, pz = 20 + (z0 - b.minZ) * cell;
+  ctx.fillRect(px, pz, (x1 - x0) * cell, (z1 - z0) * cell);
+  ctx.strokeRect(px, pz, (x1 - x0) * cell, (z1 - z0) * cell);
+  ctx.restore();
+}
+function onPlanUp(e) {
+  const d = planDrag;
+  planDrag = null;
+  if (!d) return;
+  if (d.a.x === d.b.x && d.a.z === d.b.z) { onPlanClick(e, d.a, d.alt); return; }
+  renderPlan();
+  areaAction({ x0: d.a.x, z0: d.a.z, x1: d.b.x, z1: d.b.z, y: state.currentLayer }, { fromPlan: true, half: 'bottom' });
+}
+function onPlanClick(e, c, alt) {
+  const { x, z } = c;
   const y = state.currentLayer;
   const has = state.grid.blocks.has(blockKey(x, y, z));
-  blockAction({ cell: has ? [x, y, z] : null, place: has ? null : [x, y, z], normal: [0, 1, 0], half: 'bottom', fromPlan: true }, { alt: e.altKey });
+  blockAction({ cell: has ? [x, y, z] : null, place: has ? null : [x, y, z], normal: [0, 1, 0], half: 'bottom', fromPlan: true }, { alt });
 }
 /** Plan bounds: the build, padded while a block tool is active so you can build outward. */
 function planBounds() {
@@ -1635,6 +1736,7 @@ function onKeyDown(e) {
     return;
   }
   if (k === 'r' && state.selectedId) { e.preventDefault(); rotateSelected(e.shiftKey ? -1 : 1); return; }
+  if (k === 'a' && state.tool !== 'select' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); setArea(!state.area); return; }
   const toolKey = { v: 'select', b: 'paint', p: 'place', e: 'erase' }[k];
   if (toolKey && !e.altKey) { e.preventDefault(); setTool(toolKey); return; }
   if (e.key.startsWith('Arrow') && state.selectedId) {
@@ -1717,7 +1819,7 @@ function wire() {
       state.planFacing = order[(order.indexOf(state.planFacing) + 1) % 4];
     }
     state.shape = b.dataset.shape;
-    if (viewer) viewer.setTool(state.tool, { shape: state.shape });
+    if (viewer) viewer.setTool(state.tool, toolOpts());
     updateToolbar();
   });
   $('brushBtn').addEventListener('click', () => openPicker($('brushBtn'), { title: 'Brush material', keys: fullFamilies(), current: state.brush, onPick: setBrush }));
@@ -1725,7 +1827,12 @@ function wire() {
   // The single-file copy is already offline; only the hosted site offers the download.
   if (location.protocol === 'file:') $('offlineNote').hidden = true;
   if (SUPPORT_URL) { $('supportLink').href = SUPPORT_URL; $('supportNote').hidden = false; }
-  $('planCanvas').addEventListener('click', onPlanClick);
+  $('planCanvas').addEventListener('pointerdown', onPlanDown);
+  $('planCanvas').addEventListener('pointermove', onPlanMove);
+  $('planCanvas').addEventListener('pointerup', onPlanUp);
+  $('planCanvas').addEventListener('pointercancel', () => { planDrag = null; renderPlan(); });
+  for (const b of $('areaSeg').querySelectorAll('button')) b.addEventListener('click', () => setArea(b.dataset.area === 'area'));
+  try { state.area = localStorage.getItem('rafter.area') === '1'; } catch (e) { /* ignore */ }
   try { const b = localStorage.getItem('rafter.brush'); if (b && FAMILIES[b]) state.brush = b; } catch (e) { /* ignore */ }
   updateToolbar();
 
