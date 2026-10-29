@@ -168,7 +168,7 @@ export function validateDesign(design) {
     r.profile = oneOf(r.profile, ROOF_PROFILES, 'straight');
     r.upturn = int(r.upturn, 0, 0, 16);           // blocks the corners rise (0 = off)
     r.upturnReach = int(r.upturnReach, 6, 1, 64); // how far along the eave the curl reaches
-    r.cut = int(r.cut, 0, 0, 128);                // chop the roof flat this many blocks above the eave (0 = off)
+    r.cut = int(r.cut, 0, 0, 128);                // take this many layers off the top of the roof, flat (0 = off)
     r.cap = oneOf(r.cap, ['solid', 'slab', 'open'], 'solid'); // what the chopped top is finished with
     r.capMat = r.capMat === '' || r.capMat == null ? '' : familyKey(r.capMat, '', false); // '' = roof material
     // Any block can roof: families without slabs/stairs fall back to full blocks.
@@ -616,8 +616,22 @@ function roofTiers(design, regions) {
 /** Surface height s_b(cx,cz) of one box at a column inside its region. */
 function boxSurface(b, reg, cx, cz) {
   const s = baseSurface(b, reg, cx, cz) + cornerLift(b.roof, reg, cx, cz);
-  // Chopped top: the roof stops `cut` blocks above the eave and finishes flat there.
-  return b.roof.cut > 0 ? Math.min(s, b.baseY + b.wallH + b.roof.cut) : s;
+  // Chopped top: the top `cut` layers of the roof come off and it finishes flat there.
+  return b.roof.cut > 0 ? Math.min(s, chopHeight(b, reg)) : s;
+}
+/** Surface height a chopped roof is cut to: `cut` layers below its peak, never under the eave. */
+const chopCache = new WeakMap();
+function chopHeight(b, reg) {
+  let c = chopCache.get(reg);
+  if (c === undefined) {
+    let peak = -Infinity;
+    for (let cz = reg.z0; cz <= reg.z1; cz++) for (let cx = reg.x0; cx <= reg.x1; cx++) {
+      peak = Math.max(peak, roundHalf(baseSurface(b, reg, cx, cz) + cornerLift(b.roof, reg, cx, cz)));
+    }
+    c = Math.max(b.baseY + b.wallH, Math.ceil(peak - EPS) - b.roof.cut);
+    chopCache.set(reg, c);
+  }
+  return c;
 }
 function baseSurface(b, reg, cx, cz) {
   const r = b.roof;
@@ -875,7 +889,7 @@ export function buildGrid(input) {
     dec.fillFrom = isHalf(fillMin) ? Math.floor(fillMin) : fillMin;
     dec.cx = cx; dec.cz = cz; dec.bi = bi;
     // On the flat of a chopped roof: the cap.
-    if (b.roof.cut > 0 && dec.kind === 'full' && s >= b.baseY + b.wallH + b.roof.cut - EPS) dec.cap = true;
+    if (b.roof.cut > 0 && dec.kind === 'full' && s >= chopHeight(b, reg) - EPS) dec.cap = true;
     decisions.set(k, dec);
   }
 

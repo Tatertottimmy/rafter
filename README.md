@@ -75,8 +75,8 @@ No build step is needed to develop: serve the folder with any static web server
 - **Roof types**: flat, shed, gable, hip, half-hip (jerkinhead), irimoya (Japanese hip-and-gable:
   a hip skirt on the ends with a gable standing on it), gambrel, mansard, round. **Upturned corners**
   curl the eaves up into each corner (lift in blocks + how far along the eave the curl reaches); try it
-  with the Japanese preset. **Chop top** cuts any roof off flat a set number of blocks above the
-  eave; the flat is capped solid (a flat roof you can build on), with slabs, or left open with just
+  with the Japanese preset. **Chop top** takes a set number of layers off the top of any roof, leaving it
+  flat; the flat is capped solid (a flat roof you can build on), with slabs, or left open with just
   a rim, in the roof material or one you pick. Pitch is rise per
   block of run: 0.5 (slabs), 1 (stairs), 1.5, 2 (block + stair), 3. Overhang, ridge cap
   (block / slab / wall), and under-eave soffit stairs are per box.

@@ -480,7 +480,7 @@ const SCHEMA = {
       { path: ['roof', 'clip'], key: 'roof-skirt', label: 'Hip skirt depth (blocks)', type: 'int', min: 0, show: ROOF_SHOW.skirt },
       { path: ['roof', 'upturn'], label: 'Upturned corners (blocks of lift)', type: 'int', min: 0, max: 16, show: ROOF_SHOW.upturn },
       { path: ['roof', 'upturnReach'], label: 'Corner curl length', type: 'int', min: 1, max: 64, show: ROOF_SHOW.upturnReach },
-      { path: ['roof', 'cut'], label: 'Chop top (blocks above eave, 0 = off)', type: 'int', min: 0, max: 128, show: ROOF_SHOW.cut },
+      { path: ['roof', 'cut'], label: 'Chop top (layers off the peak, 0 = off)', type: 'int', min: 0, max: 128, show: ROOF_SHOW.cut },
       { path: ['roof', 'cap'], label: 'Cap on the chopped top', type: 'select', options: [['solid', 'Solid (a flat roof)'], ['slab', 'Slabs'], ['open', 'Open (rim only)']], show: ROOF_SHOW.cap },
       { path: ['roof', 'capMat'], label: 'Cap material', type: 'material', roof: true, wide: true, auto: (o) => o.roof.material, autoHint: 'Auto uses the roof material.', show: ROOF_SHOW.cap },
       { path: ['roof', 'overhang'], label: 'Overhang', type: 'int', min: 0 },

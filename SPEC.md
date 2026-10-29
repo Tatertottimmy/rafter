@@ -304,8 +304,8 @@ Page contract (the artifact host wraps the file in its own doctype/head/body): w
   the nearest region corner, ≥ 0 so off-region neighbours hold the full lift).
 - **Multi-box fill**: a column's fill depth and the seal pass follow only the column's own box. A lower roof of
   another box next door no longer drags a tower's roof edge down into a curtain over its walls.
-- **Chopped roofs** (`roof.cut` 0–128, 0 = off): `s = min(s, E + cut)` after the corner lift, so the roof ends in a flat
-  plateau of full roof blocks.
+- **Chopped roofs** (`roof.cut` 0–128, 0 = off): `s = min(s, max(E, ceil(P) − cut))` after the corner lift, P = the
+  box's highest unchopped surface, so the top `cut` layers come off and the roof ends in a flat plateau of full roof blocks.
 - **Fills** (`design.fills`, id prefix `f`): `{ id, x, z, w, d (1–256), baseY, h (1–128), material, shape (full | slab |
   stair | pane), half, facing, axis, outline (rect | circle), hollow }`. Built after segments, only into empty cells,
   `role: "fill"`, `path: "material"`. `inOutline()` (exported) tests a column: circle = the ellipse fitting w × d, at
