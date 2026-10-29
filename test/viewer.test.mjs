@@ -234,6 +234,31 @@ test('blockBoxes turns shapes the way they face; rayBox finds the entry face', (
   assert.equal(V.rayBox([0.5, 0.5, 0.5], [0, -1, 0], [0, 0, 0, 1, 1, 1]), null, 'starting inside');
 });
 
+test('meshGrid keeps only visible faces; covered tops become caps', () => {
+  const blk = (x, y, z, mat = 'spruce', kind = 'full', props = {}) => [`${x},${y},${z}`, { id: 'x', kind, mat, props, color: '#888888', x, y, z }];
+  const grid = (list) => {
+    const blocks = new Map(list);
+    const vs = [...blocks.values()];
+    const min = { x: Math.min(...vs.map((b) => b.x)), y: Math.min(...vs.map((b) => b.y)), z: Math.min(...vs.map((b) => b.z)) };
+    const max = { x: Math.max(...vs.map((b) => b.x)), y: Math.max(...vs.map((b) => b.y)), z: Math.max(...vs.map((b) => b.z)) };
+    return { blocks, min, max };
+  };
+  const quads = (m) => m.faces.index.length / 6;
+  // two cubes side by side: 12 faces minus the 2 pressed together
+  const [side] = V.meshGrid(grid([blk(0, 0, 0), blk(1, 0, 0)]));
+  assert.equal(quads(side), 10);
+  assert.equal(side.caps.index.length, 0);
+  // a stack: the lower top face is hidden but kept as a cap for slicing; layer order holds
+  const [stack] = V.meshGrid(grid([blk(0, 1, 0), blk(0, 0, 0)]));
+  assert.equal(quads(stack), 10);
+  assert.equal(stack.caps.index.length / 6, 1);
+  assert.deepEqual([...stack.ys], [0, 1]);
+  // two straight stairs facing the same way side by side hide their touching sides
+  const st = { facing: 'north', half: 'bottom', shape: 'straight' };
+  const [stairs] = V.meshGrid(grid([blk(0, 0, 0, 'spruce', 'stair', st), blk(1, 0, 0, 'spruce', 'stair', st)]));
+  assert.equal(quads(stairs), 2 * 12 - 4);
+});
+
 if (haveBlocks) {
   test('blocks.js: every family pattern is a known pattern name', async () => {
     const { FAMILIES } = await import('../blocks.js');

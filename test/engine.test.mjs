@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { FAMILIES, FAMILY_KEYS, roofFamilies, fullFamilies } from '../blocks.js';
 import {
   buildGrid, blockKey, parseKey, stateString, defaultDesign, materialTotals, newId, validateDesign, rotatePatch, suggestVariants,
+  encodeGrid, decodeGrid,
 } from '../engine.js';
 
 // ---------------------------------------------------------------------------------
@@ -793,4 +794,15 @@ test('towers from the ground and set-back storeys meet the roof below without a 
   // a dormer on the wall line still merges (the sample house is unchanged)
   const sample = buildGrid(defaultDesign());
   assert.ok(sample.blocks.size > 300);
+});
+
+test('encodeGrid / decodeGrid round-trip a grid', () => {
+  const g = buildGrid(defaultDesign());
+  const enc = encodeGrid(g);
+  assert.ok(enc.palette.length < g.blocks.size / 2, 'blocks share templates');
+  const back = decodeGrid(structuredClone(enc));
+  assert.equal(back.blocks.size, g.blocks.size);
+  assert.deepEqual(back.min, g.min);
+  assert.deepEqual(back.max, g.max);
+  for (const [k, b] of g.blocks) assert.deepEqual(back.blocks.get(k), b, k);
 });

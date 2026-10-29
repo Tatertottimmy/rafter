@@ -34,6 +34,12 @@ const result = await esbuild.build({
   logLevel: 'warning',
 });
 const appJs = result.outputFiles[0].text;
+// The engine worker, inlined as source and started from a blob URL (see startWorker in app.js).
+const workerJs = (await esbuild.build({
+  entryPoints: [join(HERE, 'engine-worker.js')],
+  bundle: true, format: 'iife', minify: true, write: false,
+  target: ['firefox115', 'chrome115', 'safari16'], legalComments: 'none', logLevel: 'warning',
+})).outputFiles[0].text;
 const pakoJs = readFileSync(join(CACHE, 'node_modules', 'pako', 'dist', 'pako.min.js'), 'utf8');
 
 // Inline scripts must not contain a literal closing script tag.
@@ -66,7 +72,7 @@ html = html.replace(/<link rel="preconnect"[^>]*>\n?/g, '').replace(fontLink[0],
 const swaps = [
   [/<script type="importmap">[\s\S]*?<\/script>\n?/, ''],
   [/<script src="https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/pako\/[^"]+"><\/script>/, () => `<script>${inline(pakoJs)}</script>`],
-  [/<script type="module" src="app\.js"><\/script>/, () => `<script>${inline(appJs)}</script>`],
+  [/<script type="module" src="app\.js"><\/script>/, () => `<script>window.__RAFTER_WORKER_SRC = ${inline(JSON.stringify(workerJs))};</script>\n<script>${inline(appJs)}</script>`],
 ];
 for (const [re, rep] of swaps) {
   if (!re.test(html)) throw new Error('standalone: page.html no longer matches ' + re);

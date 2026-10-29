@@ -1283,3 +1283,44 @@ export function materialTotals(grid) {
   }
   return [...totals.values()].sort((a, b) => b.count - a.count || a.id.localeCompare(b.id));
 }
+
+// ---------------------------------------------------------------------------------
+// Compact transfer of a built grid (from the engine worker to the page)
+// ---------------------------------------------------------------------------------
+
+/**
+ * A grid as transferable arrays: every block's cell in `xyz` and an index into `palette`,
+ * the list of distinct block templates (without x/y/z). The surface map is left out.
+ */
+export function encodeGrid(grid) {
+  const n = grid.blocks.size;
+  const xyz = new Int32Array(n * 3), pal = new Uint32Array(n);
+  const palette = [], seen = new Map();
+  let i = 0;
+  for (const b of grid.blocks.values()) {
+    const p = b.props;
+    let ps = '';
+    for (const k in p) ps += k + '=' + p[k] + ',';
+    const key = b.id + '|' + ps + '|' + b.kind + '|' + b.mat + '|' + b.role + '|' + b.src + '|' + b.path + '|' + (b.edited ? 1 : 0) + '|' + b.color;
+    let t = seen.get(key);
+    if (t === undefined) {
+      const { x, y, z, ...rest } = b;
+      t = palette.length;
+      palette.push(rest);
+      seen.set(key, t);
+    }
+    xyz[i * 3] = b.x; xyz[i * 3 + 1] = b.y; xyz[i * 3 + 2] = b.z;
+    pal[i++] = t;
+  }
+  return { xyz, pal, palette, min: grid.min, max: grid.max };
+}
+
+/** The grid back from encodeGrid. Blocks of one template share its props object. */
+export function decodeGrid({ xyz, pal, palette, min, max, meshes }) {
+  const blocks = new Map();
+  for (let i = 0, n = pal.length; i < n; i++) {
+    const x = xyz[i * 3], y = xyz[i * 3 + 1], z = xyz[i * 3 + 2];
+    blocks.set(x + ',' + y + ',' + z, { ...palette[pal[i]], x, y, z });
+  }
+  return meshes ? { blocks, min, max, surface: new Map(), meshes } : { blocks, min, max, surface: new Map() };
+}

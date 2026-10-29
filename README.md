@@ -35,6 +35,8 @@ Static files only. No build tooling, no server code.
 | `engine.js` | Design -> blocks (height fields, rasterization, stair shapes, walls, pillars) |
 | `blocks.js` | Material catalog (155 block families with ids, colours, texture pattern) |
 | `textures.js` | Procedural block textures used by the 3D view and the swatches |
+| `engine-worker.js` | Runs the engine and the mesher in the background (Web Worker) |
+| `mesher.js` | Block shapes and face-culled meshes, shared by the viewer and the worker |
 | `viewer3d.js` | Three.js renderer and mouse interaction |
 | `plans.js` | Layer plan canvas and legend |
 | `export.js` | NBT writer, Litematica v6 and Sponge v2 encoders |

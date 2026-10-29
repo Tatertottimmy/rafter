@@ -1,6 +1,6 @@
 // app.js — Rafter UI: state, panels, wiring, persistence, downloads. (UI owns)
 import { FAMILIES, roofFamilies, fullFamilies, GROUP_ORDER } from './blocks.js';
-import { buildGrid, defaultDesign, materialTotals, newId, inOutline, validateDesign, rotatePatch, suggestVariants, blockKey, DETAIL_DEFAULTS, VARIATION_DEFAULTS, UPTURN_TYPES } from './engine.js';
+import { buildGrid, decodeGrid, defaultDesign, materialTotals, newId, inOutline, validateDesign, rotatePatch, suggestVariants, blockKey, DETAIL_DEFAULTS, VARIATION_DEFAULTS, UPTURN_TYPES } from './engine.js';
 import { encodeLitematic, encodeSchem } from './export.js';
 import { swatchDataURL, familyIcon } from './textures.js';
 import { drawLayer, layerLegend, layerRange } from './plans.js';
@@ -193,7 +193,8 @@ function restoreSnapshot(json) {
   state.dragging = false;
   if (!findObject(state.selectedId)) state.selectedId = null;
   persist();
-  rebuildNow(true);
+  pendingStructural = true;
+  rebuildAsync();
   renderHeaderFields();
   renderProps(true);
   if (viewer) viewer.setSelection(state.selectedId);
@@ -213,30 +214,114 @@ function redo() {
 }
 
 // ------------------------------------------------------------------ rebuild pipeline
+// Builds run in a worker (engine-worker.js) so a huge design never freezes the page. Every
+// request gets a sequence number; a result older than the last one applied is dropped, and
+// while the worker is busy only the newest request waits. Without a worker (it failed to
+// start) everything builds on the page, as before.
 let rebuildTimer = 0;
 let pendingStructural = false;
+let worker = null, workerReq = null, workerQueued = null, buildSeq = 0, appliedSeq = 0;
 function scheduleRebuild(structural = true) {
   pendingStructural = pendingStructural || structural;
   clearTimeout(rebuildTimer);
-  rebuildTimer = setTimeout(() => rebuildNow(), 30);
+  rebuildTimer = setTimeout(() => rebuildAsync(), 30);
 }
+/** Start any waiting rebuild now (in the background). */
 function flushRebuild() {
-  if (rebuildTimer) rebuildNow();
+  if (rebuildTimer) rebuildAsync();
 }
+/** Make sure state.grid matches the design right now (exports). */
+function flushRebuildSync() {
+  if (rebuildTimer || workerReq || workerQueued) rebuildNow();
+}
+function startWorker() {
+  try {
+    worker = window.__RAFTER_WORKER_SRC // the single-file offline build inlines the worker
+      ? new Worker(URL.createObjectURL(new Blob([window.__RAFTER_WORKER_SRC], { type: 'text/javascript' })))
+      : new Worker(new URL('./engine-worker.js', import.meta.url), { type: 'module' });
+  } catch (e) {
+    worker = null;
+    return;
+  }
+  worker.onmessage = (e) => {
+    const m = e.data, req = workerReq;
+    workerReq = null;
+    if (m.error) {
+      console.error(m.error);
+      toast('Could not build the design: ' + m.error, true);
+    } else if (m.seq > appliedSeq) {
+      state.buildMs = performance.now() - req.t0;
+      applyGrid(decodeGrid(m), req.structural, m.seq);
+    }
+    if (workerQueued) { const q = workerQueued; workerQueued = null; postBuild(q); }
+    else renderBusy();
+  };
+  worker.onerror = (e) => {
+    // Couldn't load (or crashed): build on the page from now on.
+    if (e && e.preventDefault) e.preventDefault();
+    console.warn('Engine worker unavailable; building on the page.', e && e.message);
+    const pending = workerReq || workerQueued;
+    worker = null; workerReq = workerQueued = null;
+    if (pending) rebuildNow(pending.structural);
+    renderBusy();
+  };
+}
+function postBuild(req) {
+  workerReq = req;
+  req.t0 = performance.now();
+  try {
+    worker.postMessage({ seq: req.seq, design: state.design }); // cloned now: later edits don't leak in
+  } catch (e) {
+    workerReq = null;
+    worker = null;
+    rebuildNow(req.structural);
+    return;
+  }
+  renderBusy();
+}
+function rebuildAsync() {
+  if (!worker) { rebuildNow(); return; }
+  clearTimeout(rebuildTimer);
+  rebuildTimer = 0;
+  const req = { seq: ++buildSeq, structural: pendingStructural };
+  pendingStructural = false;
+  if (workerReq) {
+    if (workerQueued) req.structural = req.structural || workerQueued.structural;
+    workerQueued = req;
+    return;
+  }
+  postBuild(req);
+}
+/** Build on the page, right now. */
 function rebuildNow(structural) {
   clearTimeout(rebuildTimer);
   rebuildTimer = 0;
-  const doStructural = structural === true || pendingStructural;
+  const doStructural = structural === true || pendingStructural || !!(workerQueued && workerQueued.structural);
   pendingStructural = false;
+  workerQueued = null;
+  let grid;
   try {
     const t0 = performance.now();
-    state.grid = buildGrid(state.design);
+    grid = buildGrid(state.design);
     state.buildMs = performance.now() - t0;
   } catch (e) {
     console.error(e);
     toast('Could not build the design: ' + (e.message || e), true);
     return;
   }
+  applyGrid(grid, doStructural, ++buildSeq);
+}
+/** A slow background build shows "Building…" in the status line. */
+let busyTimer = 0;
+function renderBusy() {
+  clearTimeout(busyTimer);
+  const busy = !!workerReq;
+  if (!busy) { $('status').classList.remove('busy'); renderStatus(); return; }
+  busyTimer = setTimeout(() => { if (workerReq) { $('status').classList.add('busy'); $('status').textContent = 'Building…'; } }, 250);
+}
+function applyGrid(grid, doStructural, seq) {
+  appliedSeq = seq;
+  state.grid = grid;
   updateToolbar();
   const { minY, maxY } = layerRange(state.grid);
   if (state.layerAtTop) state.currentLayer = maxY;
@@ -255,7 +340,7 @@ function rebuildNow(structural) {
   renderMaterials();
   renderPalette();
   renderObjectList();
-  renderStatus();
+  if (!workerReq) renderStatus();
 }
 
 // ------------------------------------------------------------------ viewer
@@ -312,7 +397,7 @@ function liveEdit(id, patch) {
     // (or on release).
     viewer.refreshSelection();
     clearTimeout(rebuildTimer);
-    rebuildTimer = setTimeout(() => rebuildNow(), 450);
+    rebuildTimer = setTimeout(() => rebuildAsync(), 450);
   } else scheduleRebuild(false);
   syncPropValues();
 }
@@ -1879,7 +1964,7 @@ function gzipBytes(bytes) {
   return window.pako.gzip(bytes);
 }
 async function exportLitematic() {
-  flushRebuild();
+  flushRebuildSync();
   try {
     const d = state.design;
     const bytes = encodeLitematic(state.grid, { name: d.name || 'Rafter', author: d.author || '', description: 'Made with Rafter', dataVersion: d.dataVersion });
@@ -1893,7 +1978,7 @@ async function exportLitematic() {
   }
 }
 async function exportSchem() {
-  flushRebuild();
+  flushRebuildSync();
   try {
     const d = state.design;
     const bytes = encodeSchem(state.grid, { dataVersion: d.dataVersion });
@@ -2110,6 +2195,7 @@ function boot() {
   wire();
   renderHeaderFields();
   rebuildNow(true);
+  startWorker();
   renderProps();
   updateHistoryButtons();
   setTab('plans');
