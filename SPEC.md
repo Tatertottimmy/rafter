@@ -312,3 +312,13 @@ Page contract (the artifact host wraps the file in its own doctype/head/body): w
   cell centres, `u² + v² ≤ 1.08`; hollow keeps cells with a 4-neighbour outside the shape. `rotatePatch('fill')`
   swaps w/d about the centre and turns facing / pane axis. Area-mode place drags create one; Make fill converts a
   solid cuboid of identical placed edits into one.
+- **Roof caps** (`roof.cap` solid | slab | open, `roof.capMat`, `''` = roof material): columns on the flat of a chopped
+  roof (`kind: full` and `s >= E + cut`) are the cap. `slab` puts a bottom slab there; `open` leaves out cap columns whose
+  four neighbours are all cap columns of the same box, keeping a one-block rim. Cap blocks carry `path: "roof.capMat"`
+  when a cap material is set.
+- **Roof tiers** (`box.stack` auto | stack | merge): steps 1–3 (and the soffit) run once per tier, each tier with its own
+  height map and per-column `roofMin`. B is on a higher tier than A (tier = 1 + A's) when their footprints overlap and:
+  `stack` → B's eave > A's eave; `auto` → B.baseY > A.baseY and (B.baseY ≥ top − 1 or B's eave > top), top = A's highest
+  surface over the overlap; `merge` → never. Higher tiers overwrite lower ones on collision. Lower-tier roof blocks strictly
+  inside a stacked box's walls, at or above its base (above its floor when it has one), are removed. Step 5 and the seal pass
+  then run once over everything; walls start under their own tier's roof.

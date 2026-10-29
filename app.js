@@ -441,6 +441,7 @@ const ROOF_SHOW = {
   upturnReach: (o) => UPTURN_TYPES.includes(o.roof.type) && o.roof.upturn > 0,
   ridgeCap: (o) => !['flat', 'shed'].includes(o.roof.type),
   cut: (o) => o.roof.type !== 'flat',
+  cap: (o) => o.roof.type !== 'flat' && o.roof.cut > 0,
   soffit: (o) => o.roof.type !== 'flat' && o.roof.overhang >= 1,
   profile: (o) => !['flat', 'gambrel', 'mansard'].includes(o.roof.type),
 };
@@ -460,6 +461,7 @@ const SCHEMA = {
       { path: ['d'], label: 'Depth (z)', type: 'int', min: 1 },
       { path: ['baseY'], label: 'Base y', type: 'int' },
       { path: ['wallH'], label: 'Wall height', type: 'int', min: 0 },
+      { path: ['stack'], label: 'Meets roofs below', type: 'select', wide: true, options: [['auto', 'Auto'], ['stack', 'Sits on top (roof below runs to my walls)'], ['merge', 'Merges into them (dormers, wings)']] },
     ] },
     { group: 'Walls', fields: [
       { path: ['walls'], label: 'Perimeter walls', type: 'check' },
@@ -479,6 +481,8 @@ const SCHEMA = {
       { path: ['roof', 'upturn'], label: 'Upturned corners (blocks of lift)', type: 'int', min: 0, max: 16, show: ROOF_SHOW.upturn },
       { path: ['roof', 'upturnReach'], label: 'Corner curl length', type: 'int', min: 1, max: 64, show: ROOF_SHOW.upturnReach },
       { path: ['roof', 'cut'], label: 'Chop top (blocks above eave, 0 = off)', type: 'int', min: 0, max: 128, show: ROOF_SHOW.cut },
+      { path: ['roof', 'cap'], label: 'Cap on the chopped top', type: 'select', options: [['solid', 'Solid (a flat roof)'], ['slab', 'Slabs'], ['open', 'Open (rim only)']], show: ROOF_SHOW.cap },
+      { path: ['roof', 'capMat'], label: 'Cap material', type: 'material', roof: true, wide: true, auto: (o) => o.roof.material, autoHint: 'Auto uses the roof material.', show: ROOF_SHOW.cap },
       { path: ['roof', 'overhang'], label: 'Overhang', type: 'int', min: 0 },
       { path: ['roof', 'ridgeCap'], label: 'Ridge cap', type: 'select', options: [['block', 'Full block'], ['slab', 'Slab'], ['wall', 'Wall (if the family has one)']], show: ROOF_SHOW.ridgeCap },
       { path: ['roof', 'soffit'], label: 'Soffit (upside-down stairs under the eave)', type: 'check', show: ROOF_SHOW.soffit, wide: true },
@@ -761,7 +765,7 @@ function buildField(f, field) {
         openPicker(input, {
           title: field.label,
           keys: fullFamilies(),
-          hint: field.auto ? 'Auto picks a look-alike of the main material.' : field.roof ? ROOF_HINT : null,
+          hint: field.autoHint || (field.auto ? 'Auto picks a look-alike of the main material.' : field.roof ? ROOF_HINT : null),
           current: getPath(cur.obj, field.path),
           auto: field.auto ? { key: field.auto(cur.obj) } : null,
           onPick: (k) => commit(k),
@@ -1197,7 +1201,7 @@ function ownerBox(srcId) {
   const f = srcId ? findObject(srcId) : null;
   return f && f.kind === 'box' ? f.obj : null;
 }
-const PART_NAMES = { wallMaterial: 'walls', 'roof.material': 'roof', 'details.trimMat': 'trim', 'details.cornerMat': 'corner posts', 'details.beamMat': 'beams', 'details.baseMat': 'foundation', 'details.windowMat': 'windows', 'details.frameMat': 'frames', 'details.sillMat': 'sills', baseMat: 'base', capMat: 'capital', material: '' };
+const PART_NAMES = { wallMaterial: 'walls', 'roof.material': 'roof', 'details.trimMat': 'trim', 'details.cornerMat': 'corner posts', 'details.beamMat': 'beams', 'details.baseMat': 'foundation', 'details.windowMat': 'windows', 'details.frameMat': 'frames', 'details.sillMat': 'sills', 'roof.capMat': 'roof cap', baseMat: 'base', capMat: 'capital', material: '' };
 function blockAction(info, mods = {}) {
   const g = state.grid;
   if (!g || !info) return;

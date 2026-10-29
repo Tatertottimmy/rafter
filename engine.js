@@ -151,6 +151,7 @@ export function validateDesign(design) {
     b.wallH = int(b.wallH, 4, 1, 128);
     b.walls = bool(b.walls, true);
     b.floor = bool(b.floor, false);
+    b.stack = oneOf(b.stack, ['auto', 'merge', 'stack'], 'auto'); // how its roof meets lower roofs
     b.wallMaterial = familyKey(b.wallMaterial, 'oak_planks', false);
     const r = b.roof && typeof b.roof === 'object' ? b.roof : {};
     b.roof = r;
@@ -168,6 +169,8 @@ export function validateDesign(design) {
     r.upturn = int(r.upturn, 0, 0, 16);           // blocks the corners rise (0 = off)
     r.upturnReach = int(r.upturnReach, 6, 1, 64); // how far along the eave the curl reaches
     r.cut = int(r.cut, 0, 0, 128);                // chop the roof flat this many blocks above the eave (0 = off)
+    r.cap = oneOf(r.cap, ['solid', 'slab', 'open'], 'solid'); // what the chopped top is finished with
+    r.capMat = r.capMat === '' || r.capMat == null ? '' : familyKey(r.capMat, '', false); // '' = roof material
     // Any block can roof: families without slabs/stairs fall back to full blocks.
     r.material = familyKey(r.material, 'spruce', false);
     const det = b.details && typeof b.details === 'object' ? b.details : {};
@@ -558,6 +561,49 @@ function cornerLift(r, reg, cx, cz) {
   return t >= 1 ? 0 : r.upturn * (1 - t) * (1 - t);
 }
 
+/**
+ * Roof tier per box. Box B sits on a higher tier than A when its footprint overlaps A's and
+ * B "stacks": by default (stack "auto") when B sits on A's roof or rises well clear
+ * of it; "stack" forces it whenever B's eave is above A's; "merge" never.
+ */
+function roofTiers(design, regions) {
+  const boxes = design.boxes;
+  const n = boxes.length;
+  const over = [];
+  for (let bi = 0; bi < n; bi++) {
+    const B = boxes[bi];
+    if (B.stack === 'merge') continue;
+    const EB = B.baseY + B.wallH;
+    for (let ai = 0; ai < n; ai++) {
+      if (ai === bi) continue;
+      // Footprints must overlap: brushing another roof's overhang doesn't count.
+      const A = boxes[ai], reg = regions[ai];
+      const x0 = Math.max(B.x, A.x), x1 = Math.min(B.x + B.w - 1, A.x + A.w - 1);
+      const z0 = Math.max(B.z, A.z), z1 = Math.min(B.z + B.d - 1, A.z + A.d - 1);
+      if (x0 > x1 || z0 > z1) continue;
+      const EA = A.baseY + A.wallH;
+      let stacks;
+      if (B.stack === 'stack') stacks = EB > EA;
+      else {
+        // Auto: B sits on A's roof (its base within a block of the roof's top under it), or
+        // its walls rise clear of it (a tower). A dormer set into the slope, whose eave is
+        // no higher than the roof behind it, does neither and keeps merging.
+        let top = -Infinity;
+        for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) top = Math.max(top, roundHalf(boxSurface(A, reg, x, z)));
+        stacks = B.baseY > A.baseY && (B.baseY >= top - 1 - EPS || EB > top + EPS);
+      }
+      if (stacks) over.push([bi, ai]);
+    }
+  }
+  const tier = new Array(n).fill(0);
+  for (let pass = 0; pass < n; pass++) {
+    let changed = false;
+    for (const [bi, ai] of over) if (tier[bi] < tier[ai] + 1 && tier[ai] + 1 <= n) { tier[bi] = tier[ai] + 1; changed = true; }
+    if (!changed) break;
+  }
+  return tier;
+}
+
 /** Surface height s_b(cx,cz) of one box at a column inside its region. */
 function boxSurface(b, reg, cx, cz) {
   const s = baseSurface(b, reg, cx, cz) + cornerLift(b.roof, reg, cx, cz);
@@ -720,10 +766,17 @@ export function buildGrid(input) {
   // Work on a validated copy so the caller's design object is never mutated.
   const design = validateDesign(JSON.parse(JSON.stringify(input ?? {})));
   const blocks = new Map();
-  const surface = new Map();   // colKey -> {s, boxId}
-  const winner = new Map();    // colKey -> box index (internal)
-  const roofMin = new Map();   // colKey -> lowest layer holding a role "roof" block
+  const surface = new Map();   // colKey -> {s, boxId} (highest tier's roof per column)
+  const outSurface = new Map();
   const regions = design.boxes.map(boxRegion);
+  // Roof tiers: a box that stands clear above another box's roof (a tower on a roof) gets its
+  // own roof layer instead of joining that roof's height map, so the lower roof runs on
+  // underneath, right up to its walls. Boxes on one tier merge as before (L-shapes, dormers).
+  const tierOf = roofTiers(design, regions);
+  const tiers = [...new Set(tierOf)].sort((a, b) => a - b);
+  const roofMins = tiers.map(() => new Map()); // per tier: colKey -> lowest layer holding a roof block
+  let roofMin = roofMins[0];
+  const roofMinOf = (bi) => roofMins[tiers.indexOf(tierOf[bi])];
 
   const put = (x, y, z, block) => { blocks.set(blockKey(x, y, z), block); };
   const putRoof = (x, y, z, block) => {
@@ -734,8 +787,13 @@ export function buildGrid(input) {
   };
   const has = (x, y, z) => blocks.has(blockKey(x, y, z));
 
+  for (let ti = 0; ti < tiers.length; ti++) {
+  roofMin = roofMins[ti];
+  const surface = new Map();   // this tier: colKey -> {s, boxId}
+  const winner = new Map();    // colKey -> box index (internal)
   // ---- STEP 1 + 2: per-box surfaces, max-union (ties: later box wins) -----------
   design.boxes.forEach((b, bi) => {
+    if (tierOf[bi] !== tiers[ti]) return;
     const reg = regions[bi];
     for (let cz = reg.z0; cz <= reg.z1; cz++) {
       for (let cx = reg.x0; cx <= reg.x1; cx++) {
@@ -807,6 +865,8 @@ export function buildGrid(input) {
     }
     dec.fillFrom = isHalf(fillMin) ? Math.floor(fillMin) : fillMin;
     dec.cx = cx; dec.cz = cz; dec.bi = bi;
+    // On the flat of a chopped roof: the cap.
+    if (b.roof.cut > 0 && dec.kind === 'full' && s >= b.baseY + b.wallH + b.roof.cut - EPS) dec.cap = true;
     decisions.set(k, dec);
   }
 
@@ -837,8 +897,16 @@ export function buildGrid(input) {
     let m = roofMat(b, regions[dec.bi], cx, cz);
     let path = roofPath(b, regions[dec.bi], cx, cz);
     if (dec.kind === 'ridge' && b.details.ridge) { m = b.details.trimMat; path = 'details.trimMat'; }
+    if (dec.cap && b.roof.capMat) { m = b.roof.capMat; path = 'roof.capMat'; }
     const putR = (x, y, z, blk) => putRoof(x, y, z, tag(blk, b.id, path));
-    if (dec.kind === 'slab') {
+    if (dec.cap && b.roof.cap === 'open') {
+      // Open top: keep a one-block rim, leave the middle open.
+      const inner = DIRS.every((d) => { const nd = decisions.get(colKey(cx + DIR_OFFSET[d][0], cz + DIR_OFFSET[d][1])); return nd && nd.cap && nd.bi === dec.bi; });
+      if (inner) continue;
+    }
+    if (dec.cap && b.roof.cap === 'slab') {
+      putR(cx, layer, cz, slabBlock(m, 'bottom', 'roof'));
+    } else if (dec.kind === 'slab') {
       putR(cx, layer, cz, slabBlock(m, 'bottom', 'roof'));
     } else if (dec.kind === 'ridge') {
       // STEP 4: a ridge block is never a stair.
@@ -881,6 +949,25 @@ export function buildGrid(input) {
     putRoof(cx, t - 1, cz, tag(stairBlock(roofMat(b, reg, cx, cz), out, 'top', 'roof'), b.id, roofPath(b, reg, cx, cz)));
   }
 
+  for (const [k, v] of surface) { const o = outSurface.get(k); if (!o || v.s >= o.s) outSurface.set(k, v); }
+  } // tiers
+
+  // A stacked box's room is open: lower-tier roof inside its walls, at or above its base, goes.
+  design.boxes.forEach((b, bi) => {
+    if (tierOf[bi] === tiers[0]) return;
+    for (let cz = b.z + 1; cz < b.z + b.d - 1; cz++) for (let cx = b.x + 1; cx < b.x + b.w - 1; cx++) {
+      for (let ti = 0; tiers[ti] < tierOf[bi]; ti++) {
+        const low = roofMins[ti].get(colKey(cx, cz));
+        if (low === undefined) continue;
+        for (let y = Math.max(low, b.baseY + (b.floor ? 1 : 0)); y <= low + 512; y++) {
+          const k = blockKey(cx, y, cz), blk = blocks.get(k);
+          if (!blk) break;
+          if (blk.role === 'roof' && tierOf[design.boxes.findIndex((o) => o.id === blk.src)] === tiers[ti]) blocks.delete(k);
+        }
+      }
+    }
+  });
+
   // ---- STEP 5: stair shape pass -------------------------------------------------------
   for (const [key, blk] of blocks) {
     if (blk.kind !== 'stair') continue;
@@ -900,14 +987,18 @@ export function buildGrid(input) {
       if (upperCoversFace(blk, d)) continue;
       const nx = x + DIR_OFFSET[d][0], nz = z + DIR_OFFSET[d][1];
       if (has(nx, y, nz)) continue;
-      const low = roofMin.get(colKey(nx, nz));
+      const srcBi = design.boxes.findIndex((o) => o.id === blk.src);
+      const low = srcBi < 0 ? undefined : roofMinOf(srcBi).get(colKey(nx, nz));
       if (low === undefined || low <= y) continue;
       // Only within one box: a tower next to a lower roof is open air there, not a gap.
       if (blocks.get(blockKey(nx, low, nz)).src !== blk.src) continue;
       sealed.push([nx, y, nz, blocks.get(blockKey(nx, low, nz)), low]);
     }
   }
-  for (const [nx, y, nz, src, low] of sealed) for (let yy = y; yy < low; yy++) if (!has(nx, yy, nz)) putRoof(nx, yy, nz, tag(fullBlock(src.mat, 'roof'), src.src, src.path));
+  for (const [nx, y, nz, src, low] of sealed) {
+    roofMin = roofMinOf(design.boxes.findIndex((o) => o.id === src.src));
+    for (let yy = y; yy < low; yy++) if (!has(nx, yy, nz)) putRoof(nx, yy, nz, tag(fullBlock(src.mat, 'roof'), src.src, src.path));
+  }
 
   // ---- STEP 6: walls, then floors -----------------------------------------------------
   // Shared-room rule (SPEC amendment): a cell (cx, y, cz) is "inside another room" when
@@ -939,7 +1030,7 @@ export function buildGrid(input) {
         const along = cz === b.z || cz === z1 ? 'x' : 'z';
         const side = along === 'x' ? (cz === b.z ? 'north' : 'south') : (cx === b.x ? 'west' : 'east');
         const i = along === 'x' ? cx - b.x : cz - b.z;
-        const lowest = roofMin.get(colKey(cx, cz));
+        const lowest = roofMinOf(design.boxes.indexOf(b)).get(colKey(cx, cz));
         let start = (lowest === undefined ? E : lowest) - 1;
         // A box stacked on this one (another floor) builds its own walls: stop below it.
         for (const o of design.boxes) {
@@ -1126,7 +1217,7 @@ export function buildGrid(input) {
       if (x > max.x) max.x = x; if (y > max.y) max.y = y; if (z > max.z) max.z = z;
     }
   }
-  return { blocks, min, max, surface };
+  return { blocks, min, max, surface: outSurface };
 }
 
 // ---------------------------------------------------------------------------------

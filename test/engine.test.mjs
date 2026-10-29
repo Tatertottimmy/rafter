@@ -750,3 +750,26 @@ test('round and hollow fills; chopped roof tops', () => {
   assert.ok(c.max.y < roof(0).max.y && c.max.y <= 5);
   for (let z = 3; z <= 7; z++) assert.ok(get(c, 4, c.max.y, z), 'flat top at z=' + z);
 });
+
+test('a box on another roof keeps that roof whole up to its walls; caps on chopped tops', () => {
+  const main = box({ w: 11, d: 9, wallH: 4, roof: { type: 'gable', axis: 'x', overhang: 1 } });
+  const tower = box({ id: 'b2', x: 4, z: 3, w: 3, d: 3, baseY: 6, wallH: 4, wallMaterial: 'stone_bricks', roof: { type: 'hip', overhang: 1, material: 'dark_oak' } });
+  const g = buildGrid(design([main, tower]));
+  // under the tower's eave overhang the main roof carries on (it used to be cut away)
+  const col = (x, z, src) => [...g.blocks].filter(([k, b]) => b.src === src && k.startsWith(x + ',') && k.endsWith(',' + z)).length;
+  assert.ok(col(5, 2, 'b1') > 0, 'main roof under the overhang');
+  assert.ok(col(5, 6, 'b1') > 0, 'main roof under the overhang (south)');
+  assert.equal(get(g, 4, 9, 3).src, 'b2', 'tower wall');
+  // forced merge gives the old single height map back
+  const m = buildGrid(design([main, { ...tower, stack: 'merge' }]));
+  assert.equal(col.call(null, 5, 2, 'b1'), col(5, 2, 'b1'));
+  assert.ok([...m.blocks].filter(([k, b]) => b.src === 'b1' && k.startsWith('5,') && k.endsWith(',2')).length < col(5, 2, 'b1'));
+  // chopped tops: slab cap, open rim
+  const chop = (cap) => buildGrid(design([box({ w: 9, d: 11, wallH: 3, roof: { type: 'hip', cut: 2, cap, capMat: 'stone_bricks' } })]));
+  const sl = chop('slab'), op = chop('open');
+  const top = sl.max.y;
+  assert.equal(get(sl, 4, top, 5).kind, 'slab');
+  assert.equal(get(sl, 4, top, 5).mat, 'stone_bricks');
+  assert.equal(get(op, 4, top, 5), undefined, 'open middle');
+  assert.ok([...op.blocks].some(([k, b]) => b.mat === 'stone_bricks'), 'rim kept');
+});

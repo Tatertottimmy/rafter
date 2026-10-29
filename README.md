@@ -76,7 +76,8 @@ No build step is needed to develop: serve the folder with any static web server
   a hip skirt on the ends with a gable standing on it), gambrel, mansard, round. **Upturned corners**
   curl the eaves up into each corner (lift in blocks + how far along the eave the curl reaches); try it
   with the Japanese preset. **Chop top** cuts any roof off flat a set number of blocks above the
-  eave (a flat-topped hip or gable). Pitch is rise per
+  eave; the flat is capped solid (a flat roof you can build on), with slabs, or left open with just
+  a rim, in the roof material or one you pick. Pitch is rise per
   block of run: 0.5 (slabs), 1 (stairs), 1.5, 2 (block + stair), 3. Overhang, ridge cap
   (block / slab / wall), and under-eave soffit stairs are per box.
 - **Tools** (bar at the bottom of the 3D view): **Select** (V) moves and edits objects. **Paint** (B)
@@ -103,6 +104,10 @@ No build step is needed to develop: serve the folder with any static web server
   cracked bricks, nearby wood tones, ...) as patches, scatter, grime (heavier low down) or
   streaks. Mixes are picked automatically or chosen by hand; Reshuffle gives a new layout.
 - **Peaks and valleys** come from overlapping boxes; the higher roof wins at each column.
+- **Boxes on roofs**: a box that sits on another roof, or whose walls rise clear of it (a tower),
+  gets its own roof, and the roof below runs on unbroken right up to its walls. Dormers and wings
+  set into a roof still merge with it. "Meets roofs below" (Footprint) overrides this per box:
+  Auto, Sits on top, or Merges into them.
 - **Walls** are generated under the roof per box (gable ends fill automatically) and stop where they
   would enter another box's room or hit another roof. Add free-standing wall segments and pillars
   from the Objects panel.
