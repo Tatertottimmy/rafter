@@ -75,7 +75,8 @@ No build step is needed to develop: serve the folder with any static web server
 - **Roof types**: flat, shed, gable, hip, half-hip (jerkinhead), irimoya (Japanese hip-and-gable:
   a hip skirt on the ends with a gable standing on it), gambrel, mansard, round. **Upturned corners**
   curl the eaves up into each corner (lift in blocks + how far along the eave the curl reaches); try it
-  with the Japanese preset. Pitch is rise per
+  with the Japanese preset. **Chop top** cuts any roof off flat a set number of blocks above the
+  eave (a flat-topped hip or gable). Pitch is rise per
   block of run: 0.5 (slabs), 1 (stairs), 1.5, 2 (block + stair), 3. Overhang, ridge cap
   (block / slab / wall), and under-eave soffit stairs are per box.
 - **Tools** (bar at the bottom of the 3D view): **Select** (V) moves and edits objects. **Paint** (B)
@@ -83,12 +84,19 @@ No build step is needed to develop: serve the folder with any static web server
   "One block" mode. **Place** (P) puts a block, slab or stairs against the face you click or on the
   ground; stairs face the way you look, slabs go top or bottom by where you click. **Area** (A) mode:
   drag a rectangle to place a whole floor, erase or repaint every block on that layer in one step
+  (Shift keeps it square). **Circle** mode does the same with the circle or oval that fits the
+  rectangle. A placed area becomes a **fill**: one object (listed under Fills) that you select, move,
+  resize, rotate, clone and repaint like a box, with no roof or wall details. A fill can be a
+  rectangle or a circle, solid or hollow (just the rim, for round towers and rings), any height, and
+  full blocks, slabs, stairs or panes. If you
   start on a wall face and the rectangle stands up in that wall, so you can paint or erase a window
   shape straight into it. On the layer plan any drag works this way. **Pane** places glass panes
   that run along the wall you click. **Erase** (E)
   removes blocks. Shift+drag paints, places or erases a stroke; Alt+click picks up a block's
   material. The layer plan takes clicks too, on the current layer. In **Select**, click a block
-  you placed to select it (Shift+click for more). Drag them to move, or use the arrow keys
+  you placed to select it (Shift+click for more), or **Alt+drag** a rectangle to select every
+  placed block inside it (works from any tool; Shift+Alt adds). **Make fill** turns a selected
+  solid rectangle of matching blocks into one fill. Drag them to move, or use the arrow keys
   (Shift = 5) and Page Up / Page Down; Delete removes them and R turns stairs. Edits on a box move and rotate
   with it; "Clear edits" removes them all.
 - **Texture**: per box, mix a share of look-alike blocks into the walls and roof (mossy and

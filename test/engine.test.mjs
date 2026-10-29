@@ -713,3 +713,40 @@ test('pillars: thickness, wall posts, base and capital rings; pane edits', () =>
   const w = buildGrid({ boxes: [], pillars: [{ id: 'p1', x: 0, z: 0, h: 3, material: 'cobblestone', shape: 'wall' }] });
   assert.equal(get(w, 0, 1, 0).kind, 'wall');
 });
+
+test('fills: solid rectangles of one block that never overwrite what is built', () => {
+  const b = box({ roof: { type: 'flat' } });
+  const g = buildGrid(design([b], { fills: [{ id: 'f1', x: -2, z: 0, w: 12, d: 5, baseY: 0, h: 1, material: 'stone_bricks' }] }));
+  assert.equal(get(g, -2, 0, 0).mat, 'stone_bricks');
+  assert.equal(get(g, -2, 0, 0).src, 'f1');
+  assert.equal(get(g, 3, 0, 2).src, 'f1', 'fills the inside of the box');
+  assert.equal(get(g, 0, 0, 0).src, 'b1', 'box walls win');
+  assert.equal(get(g, 9, 0, 4).mat, 'stone_bricks');
+  assert.equal(get(g, 10, 0, 0), undefined);
+  // stairs and panes, validation defaults, rotation
+  const s = buildGrid(design([], { fills: [{ x: 0, z: 0, w: 3, d: 1, h: 2, material: 'oak', shape: 'stair', facing: 'south', half: 'top' }] }));
+  assert.equal(get(s, 2, 1, 0).kind, 'stair');
+  assert.equal(get(s, 2, 1, 0).props.facing, 'south');
+  assert.equal(get(s, 2, 1, 0).props.half, 'top');
+  const v = validateDesign(design([], { fills: [{ shape: 'pane', axis: 'y', w: 999 }] }));
+  assert.equal(v.fills[0].id, 'f1');
+  assert.equal(v.fills[0].axis, 'x');
+  assert.equal(v.fills[0].w, 256);
+  const p = rotatePatch('fill', { x: 0, z: 0, w: 4, d: 2, facing: 'north', axis: 'x' }, 1);
+  assert.deepEqual(p, { x: 1, z: -1, w: 2, d: 4, facing: 'east', axis: 'z' });
+  assert.equal(newId({ boxes: [], fills: [{ id: 'f1' }] }, 'f'), 'f2');
+});
+
+test('round and hollow fills; chopped roof tops', () => {
+  const g = buildGrid(design([], { fills: [{ id: 'f1', x: 0, z: 0, w: 9, d: 9, h: 2, material: 'stone_bricks', outline: 'circle', hollow: true }] }));
+  assert.equal(get(g, 4, 0, 0).src, 'f1', 'rim at the middle of each side');
+  assert.equal(get(g, 0, 0, 0), undefined, 'corner cut off');
+  assert.equal(get(g, 4, 1, 4), undefined, 'hollow inside');
+  const solid = buildGrid(design([], { fills: [{ x: 0, z: 0, w: 9, d: 9, material: 'stone', outline: 'circle' }] }));
+  assert.ok(get(solid, 4, 0, 4));
+  assert.ok(solid.blocks.size > 50 && solid.blocks.size < 81);
+  const roof = (cut) => buildGrid(design([box({ w: 9, d: 11, wallH: 3, roof: { type: 'gable', axis: 'x', cut } })]));
+  const c = roof(2);
+  assert.ok(c.max.y < roof(0).max.y && c.max.y <= 5);
+  for (let z = 3; z <= 7; z++) assert.ok(get(c, 4, c.max.y, z), 'flat top at z=' + z);
+});

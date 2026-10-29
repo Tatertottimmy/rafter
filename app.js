@@ -1,6 +1,6 @@
 // app.js — Rafter UI: state, panels, wiring, persistence, downloads. (UI owns)
 import { FAMILIES, roofFamilies, fullFamilies, GROUP_ORDER } from './blocks.js';
-import { buildGrid, defaultDesign, materialTotals, newId, validateDesign, rotatePatch, suggestVariants, blockKey, DETAIL_DEFAULTS, VARIATION_DEFAULTS, UPTURN_TYPES } from './engine.js';
+import { buildGrid, defaultDesign, materialTotals, newId, inOutline, validateDesign, rotatePatch, suggestVariants, blockKey, DETAIL_DEFAULTS, VARIATION_DEFAULTS, UPTURN_TYPES } from './engine.js';
 import { encodeLitematic, encodeSchem } from './export.js';
 import { swatchDataURL, familyIcon } from './textures.js';
 import { drawLayer, layerLegend, layerRange } from './plans.js';
@@ -52,6 +52,7 @@ const state = {
   paintScope: 'part', // part = the whole wall/roof/trim the block belongs to; block = one block
   shape: 'full',
   area: false,         // Place / Erase / Paint: drag a rectangle instead of single blocks
+  circle: false,       // ...and with this, the circle (ellipse) that fits the rectangle
   clone: { n: 1, dir: 'east', gap: 1 },
   planFacing: 'north', // stair facing for clicks on the layer plan (R turns it while placing stairs)
   rotAnchor: null, // { id, start, q, sig }: repeated rotations restart from `start` so odd sizes don't drift
@@ -122,12 +123,15 @@ function findObject(id) {
   if (i >= 0) return { kind: 'pillar', obj: d.pillars[i], list: d.pillars, index: i };
   i = d.segments.findIndex((o) => o.id === id);
   if (i >= 0) return { kind: 'segment', obj: d.segments[i], list: d.segments, index: i };
+  i = d.fills.findIndex((o) => o.id === id);
+  if (i >= 0) return { kind: 'fill', obj: d.fills[i], list: d.fills, index: i };
   return null;
 }
 function objectLabel(f) {
   if (!f) return '';
   if (f.kind === 'box') return f.obj.name || f.obj.id;
   if (f.kind === 'pillar') return 'Pillar ' + f.obj.id;
+  if (f.kind === 'fill') return 'Fill ' + f.obj.id;
   return 'Wall ' + f.obj.id;
 }
 function objectMaterial(f) {
@@ -138,7 +142,7 @@ function safeValidate(design) {
 }
 function normalizeDesign(design) {
   const d = safeValidate(design);
-  d.boxes = d.boxes || []; d.pillars = d.pillars || []; d.segments = d.segments || [];
+  d.boxes = d.boxes || []; d.pillars = d.pillars || []; d.segments = d.segments || []; d.fills = d.fills || [];
   if (typeof d.name !== 'string') d.name = 'Untitled';
   if (typeof d.author !== 'string') d.author = '';
   if (!Number.isFinite(d.dataVersion)) d.dataVersion = DEFAULT_DATA_VERSION;
@@ -265,6 +269,7 @@ async function initViewer() {
       onBlockClick: (info, mods) => blockAction(info, mods),
       onArea: (rect, info) => areaAction(rect, info),
       onSelectBlock: (cell, mods) => selectBlock(cell, mods),
+      onMarquee: (cells, mods) => selectBlocks(cells, mods),
       onMoveBlocks: (dx, dz) => dragBlocks(dx, dz),
       onMoveBlocksEnd: () => endBlockDrag(),
       onStrokeEnd: () => flushRebuild(),
@@ -348,6 +353,7 @@ function renderPalette() {
   }
   for (const p of state.design.pillars) touch(p.material, false);
   for (const s of state.design.segments) touch(s.material, false);
+  for (const f of state.design.fills) touch(f.material, false);
   if (state.grid) for (const b of state.grid.blocks.values()) { const u = touch(b.mat, false, false); if (u) u.count++; }
 
   const entries = [...usage.entries()].filter(([k, u]) => u.count > 0 || u.core).sort((a, b) => b[1].count - a[1].count || famName(a[0]).localeCompare(famName(b[0])));
@@ -380,6 +386,7 @@ function swapFamily(from, to) {
   }
   for (const p of state.design.pillars) if (p.material === from) p.material = to;
   for (const s of state.design.segments) if (s.material === from) s.material = to;
+  for (const f of state.design.fills) if (f.material === from) f.material = to;
   afterChange();
   renderProps(true);
   toast(`${famName(from)} → ${famName(to)}`);
@@ -391,11 +398,12 @@ function renderObjectList() {
   const focusedId = document.activeElement && ul.contains(document.activeElement) ? document.activeElement.id : null;
   ul.replaceChildren();
   const d = state.design;
-  $('objectCount').textContent = String(d.boxes.length + d.pillars.length + d.segments.length);
+  $('objectCount').textContent = String(d.boxes.length + d.pillars.length + d.segments.length + d.fills.length);
   const groups = [
     ['Boxes', d.boxes, 'box'],
     ['Pillars', d.pillars, 'pillar'],
     ['Wall segments', d.segments, 'segment'],
+    ['Fills', d.fills, 'fill'],
   ];
   for (const [label, arr, kind] of groups) {
     if (!arr.length) continue;
@@ -405,6 +413,7 @@ function renderObjectList() {
       let meta;
       if (kind === 'box') meta = `${o.w}×${o.d} ${o.roof.type}`;
       else if (kind === 'pillar') meta = `(${o.x},${o.z}) h${o.h}`;
+      else if (kind === 'fill') meta = `${o.outline === 'circle' ? '○ ' : ''}${o.w}×${o.d}×${o.h}`;
       else meta = `(${o.x0},${o.z0})→(${o.x1},${o.z1})`;
       const btn = h('button', {
         class: 'obj', id: 'obj-' + o.id, type: 'button',
@@ -431,10 +440,12 @@ const ROOF_SHOW = {
   upturn: (o) => UPTURN_TYPES.includes(o.roof.type),
   upturnReach: (o) => UPTURN_TYPES.includes(o.roof.type) && o.roof.upturn > 0,
   ridgeCap: (o) => !['flat', 'shed'].includes(o.roof.type),
+  cut: (o) => o.roof.type !== 'flat',
   soffit: (o) => o.roof.type !== 'flat' && o.roof.overhang >= 1,
   profile: (o) => !['flat', 'gambrel', 'mansard'].includes(o.roof.type),
 };
 const DET = (k) => (o) => !!(o.details && o.details[k]);
+const FILL_SHAPE_OPTIONS = [['full', 'Full blocks'], ['slab', 'Slabs'], ['stair', 'Stairs'], ['pane', 'Panes / bars']];
 const PILLAR_TRIM = [['none', 'None'], ['block', 'Block ring'], ['stairs', 'Stair ring'], ['slab', 'Slab ring']];
 const VAR = (k) => (o) => !!(o.variation && o.variation[k] > 0);
 const STYLE_OPTIONS = [['patches', 'Patches'], ['scatter', 'Scatter'], ['grime', 'Grime (heavier low down)'], ['streaks', 'Streaks (drip marks)']];
@@ -467,6 +478,7 @@ const SCHEMA = {
       { path: ['roof', 'clip'], key: 'roof-skirt', label: 'Hip skirt depth (blocks)', type: 'int', min: 0, show: ROOF_SHOW.skirt },
       { path: ['roof', 'upturn'], label: 'Upturned corners (blocks of lift)', type: 'int', min: 0, max: 16, show: ROOF_SHOW.upturn },
       { path: ['roof', 'upturnReach'], label: 'Corner curl length', type: 'int', min: 1, max: 64, show: ROOF_SHOW.upturnReach },
+      { path: ['roof', 'cut'], label: 'Chop top (blocks above eave, 0 = off)', type: 'int', min: 0, max: 128, show: ROOF_SHOW.cut },
       { path: ['roof', 'overhang'], label: 'Overhang', type: 'int', min: 0 },
       { path: ['roof', 'ridgeCap'], label: 'Ridge cap', type: 'select', options: [['block', 'Full block'], ['slab', 'Slab'], ['wall', 'Wall (if the family has one)']], show: ROOF_SHOW.ridgeCap },
       { path: ['roof', 'soffit'], label: 'Soffit (upside-down stairs under the eave)', type: 'check', show: ROOF_SHOW.soffit, wide: true },
@@ -534,6 +546,24 @@ const SCHEMA = {
       { path: ['capMat'], label: 'Capital material', type: 'material', roof: true, wide: true, show: (o) => o.cap !== 'none' },
     ] },
   ],
+  fill: [
+    { group: 'Fill', fields: [
+      { path: ['x'], label: 'x (west edge)', type: 'int' },
+      { path: ['z'], label: 'z (north edge)', type: 'int' },
+      { path: ['w'], label: 'Width (x)', type: 'int', min: 1, max: 256 },
+      { path: ['d'], label: 'Depth (z)', type: 'int', min: 1, max: 256 },
+      { path: ['baseY'], label: 'Base y', type: 'int' },
+      { path: ['h'], label: 'Height', type: 'int', min: 1, max: 128 },
+      { path: ['material'], label: 'Material', type: 'material', roof: true, wide: true },
+      { path: ['outline'], label: 'Outline', type: 'select', options: [['rect', 'Rectangle'], ['circle', 'Circle / oval']] },
+      { path: ['hollow'], label: 'Hollow (rim only: walls, rings, towers)', type: 'check', wide: true },
+      { path: ['shape'], label: 'Shape', type: 'select', options: FILL_SHAPE_OPTIONS },
+      { path: ['half'], label: 'Half', type: 'select', options: [['bottom', 'Bottom'], ['top', 'Top (upside down)']], show: (o) => o.shape === 'slab' || o.shape === 'stair' },
+      { path: ['facing'], label: 'Stairs face', type: 'select', options: DIR_OPTIONS, show: (o) => o.shape === 'stair' },
+      { path: ['axis'], key: 'fill-pane-axis', label: 'Runs along', type: 'select', options: [['x', 'x (east–west)'], ['z', 'z (north–south)']], show: (o) => o.shape === 'pane' },
+      { path: ['axis'], key: 'fill-log-axis', label: 'Grain', type: 'select', options: [['y', 'Up'], ['x', 'East–west'], ['z', 'North–south']], show: (o) => o.shape === 'full' && !!(FAMILIES[o.material] || {}).axis },
+    ] },
+  ],
   segment: [
     { group: 'Wall segment', fields: [
       { path: ['x0'], label: 'From x', type: 'int' },
@@ -568,7 +598,7 @@ function renderProps(valuesOnly = false) {
   const key = f.kind + ':' + f.obj.id;
   if (valuesOnly && state.propsFor === key) { syncPropValues(); return; }
   state.propsFor = key;
-  $('propsTitle').textContent = f.kind === 'box' ? 'Box' : f.kind === 'pillar' ? 'Pillar' : 'Wall segment';
+  $('propsTitle').textContent = { box: 'Box', pillar: 'Pillar', segment: 'Wall segment', fill: 'Fill' }[f.kind];
   $('propsId').textContent = f.obj.id;
   body.replaceChildren();
 
@@ -613,6 +643,7 @@ function clonePanel(run) {
 function objectSize(kind, o) {
   if (kind === 'box') return [o.w, o.wallH, o.d];
   if (kind === 'pillar') return [o.size || 1, o.h, o.size || 1];
+  if (kind === 'fill') return [o.w, o.h, o.d];
   return [Math.abs(o.x1 - o.x0) + 1, o.h, Math.abs(o.z1 - o.z0) + 1];
 }
 function cloneObject(id, n = state.clone.n, dirName = state.clone.dir, gap = state.clone.gap) {
@@ -626,7 +657,7 @@ function cloneObject(id, n = state.clone.n, dirName = state.clone.dir, gap = sta
   const made = [];
   for (let k = 1; k <= n; k++) {
     const c = JSON.parse(JSON.stringify(f.obj));
-    c.id = newId(d, { box: 'b', pillar: 'p', segment: 's' }[f.kind], new Set(made));
+    c.id = newId(d, { box: 'b', pillar: 'p', segment: 's', fill: 'f' }[f.kind], new Set(made));
     if (f.kind === 'box') c.name = 'Box ' + c.id.replace(/^b/, '');
     if (f.kind === 'box' && step[1] > 0 && c.details) c.details.door = false; // upper floors: no doorway into thin air
     if (f.kind === 'segment') { c.x0 += step[0] * k; c.x1 += step[0] * k; c.z0 += step[2] * k; c.z1 += step[2] * k; }
@@ -869,13 +900,42 @@ function renderBlockProps() {
   const anyStair = cells.some((c) => { const ex = placedEdit(c); return ex && (ex.edit.shape === 'stair' || ex.edit.shape === 'pane'); });
   body.replaceChildren(
     h('ul', { class: 'legend block-list' }, rows, cells.length > 12 ? h('li', { class: 'empty', text: '+ ' + (cells.length - 12) + ' more' }) : null),
-    h('p', { class: 'hint', text: 'Drag to move, or use the arrow keys (Shift = 5) and Page Up / Page Down. Shift+click adds more blocks. Delete removes them' + (anyStair ? ', R turns stairs.' : '.') }),
+    h('p', { class: 'hint', text: 'Drag to move, or use the arrow keys (Shift = 5) and Page Up / Page Down. Shift+click adds more blocks, Alt+drag selects a rectangle. Delete removes them' + (anyStair ? ', R turns stairs.' : '.') }),
     h('div', { class: 'props-actions' },
       h('button', { class: 'btn small', type: 'button', id: 'block-up', text: 'Up ↑', title: 'Raise one block (Page Up)', onclick: () => nudgeBlocks(0, 1, 0) }),
       h('button', { class: 'btn small', type: 'button', id: 'block-down', text: 'Down ↓', title: 'Lower one block (Page Down)', onclick: () => nudgeBlocks(0, -1, 0) }),
+      fillable(cells) ? h('button', { class: 'btn small', type: 'button', id: 'block-fill', text: 'Make fill', title: 'Turn these blocks into one fill you can move and resize like a box', onclick: () => blocksToFill() }) : null,
       anyStair ? h('button', { class: 'btn small', type: 'button', id: 'block-rotate', text: 'Turn', title: 'Turn stairs and panes (R)', onclick: () => rotateSelectedBlocks() }) : null,
       h('button', { class: 'btn danger small', type: 'button', id: 'block-delete', text: cells.length === 1 ? 'Delete' : 'Delete ' + cells.length, onclick: () => deleteSelectedBlocks() })),
     clonePanel(() => cloneBlocks()));
+}
+/** The fill these selected blocks would make: a solid rectangle of identical blocks, or null. */
+function fillable(cells) {
+  if (cells.length < 2) return null;
+  const exs = cells.map(placedEdit);
+  if (exs.some((ex) => !ex)) return null;
+  const sig = (e) => [e.shape, e.mat, e.half || '', e.facing || '', e.shape === 'full' ? e.axis || 'y' : e.axis || ''].join('|');
+  const s0 = sig(exs[0].edit);
+  if (exs.some((ex) => sig(ex.edit) !== s0)) return null;
+  const lo = [0, 1, 2].map((i) => Math.min(...cells.map((c) => c[i]))), hi = [0, 1, 2].map((i) => Math.max(...cells.map((c) => c[i])));
+  const [w, hh, d] = [0, 1, 2].map((i) => hi[i] - lo[i] + 1);
+  if (w * hh * d !== new Set(cells.map(cellKey)).size || w > 256 || d > 256 || hh > 128) return null;
+  const e = exs[0].edit;
+  return { x: lo[0], baseY: lo[1], z: lo[2], w, d, h: hh, material: e.mat, shape: e.shape, half: e.half || 'bottom', facing: e.facing || 'north', axis: e.axis || (e.shape === 'pane' ? 'x' : 'y') };
+}
+function blocksToFill() {
+  const cells = state.selectedBlocks;
+  const spec = fillable(cells);
+  if (!spec) return;
+  beginChange(null);
+  for (const c of cells) { const ex = placedEdit(c); if (ex) ex.list.splice(ex.index, 1); }
+  const id = newId(state.design, 'f');
+  state.design.fills.push({ id, ...spec });
+  state.selectedBlocks = [];
+  if (viewer) viewer.setSelectedBlocks([]);
+  afterChange();
+  select(id);
+  toast('Made fill ' + id + ' from ' + cells.length + ' blocks', false, { label: 'Undo', run: undo });
 }
 function deleteSelectedBlocks() {
   const cells = state.selectedBlocks.filter((c) => placedEdit(c));
@@ -967,14 +1027,17 @@ const TOOL_HINTS = {
 };
 const AREA_HINTS = {
   paint: 'Drag a rectangle to repaint every block on that layer · click for one block · right-drag to orbit',
-  place: 'Drag a rectangle to fill a floor on that layer · click for one block · right-drag to orbit',
+  place: 'Drag a rectangle (Shift = square) to make a fill (one object you can move and resize later) · click for one block · Alt+drag selects · right-drag to orbit',
   erase: 'Drag a rectangle to clear every block on that layer · click for one block · right-drag to orbit',
 };
 const AREA_MAX = 128 * 128;
-const toolOpts = () => ({ shape: state.shape, area: state.area });
+const FILL_MAX = 256 * 256 * 8;
+const toolOpts = () => ({ shape: state.shape, area: state.area, circle: state.area && state.circle });
+/** on: false (one block), true / 'area' (rectangle) or 'circle'. */
 function setArea(on) {
-  state.area = !!on;
-  try { localStorage.setItem('rafter.area', state.area ? '1' : ''); } catch (e) { /* ignore */ }
+  state.area = !!on && on !== 'one';
+  state.circle = on === 'circle';
+  try { localStorage.setItem('rafter.area', state.circle ? 'circle' : state.area ? '1' : ''); } catch (e) { /* ignore */ }
   if (viewer) viewer.setTool(state.tool, toolOpts());
   updateToolbar();
 }
@@ -987,23 +1050,21 @@ function areaAction(r, info) {
   if (!g || state.tool === 'select') return;
   const x0 = Math.min(r.x0, r.x1), x1 = Math.max(r.x0, r.x1), z0 = Math.min(r.z0, r.z1), z1 = Math.max(r.z0, r.z1);
   const y0 = Math.max(-64, Math.min(r.y0, r.y1)), y1 = Math.min(319, Math.max(r.y0, r.y1));
-  if ((x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1) > AREA_MAX) { toast('That area is too big (128 × 128 max)', true); return; }
+  const vol = (x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1);
+  if (state.tool === 'place') {
+    if (x1 - x0 >= 256 || z1 - z0 >= 256 || y1 - y0 >= 128 || vol > FILL_MAX) { toast('That fill is too big (256 × 256 max)', true); return; }
+    placeFill({ x0, y0, z0, x1, y1, z1 }, info || {});
+    return;
+  }
+  if (vol > AREA_MAX) { toast('That area is too big (128 × 128 max)', true); return; }
   const brush = state.brush;
-  const start = info && info.cell && g.blocks.get(blockKey(...info.cell));
-  const owner = ownerBox(start ? start.src : null);
   const runs = [];
+  const round = state.area && state.circle;
   for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) {
     for (let x = x0; x <= x1; x++) {
+      if (round && !inOutline('circle', x0, z0, x1 - x0 + 1, z1 - z0 + 1, x, z)) continue;
       const at = g.blocks.get(blockKey(x, y, z));
-      if (state.tool === 'place') {
-        if (at) continue;
-        const edit = { x, y, z, shape: state.shape, mat: brush };
-        if (state.shape === 'slab' || state.shape === 'stair') edit.half = (info && info.half) || 'bottom';
-        if (state.shape === 'stair') edit.facing = info && !info.fromPlan && info.facing ? info.facing : state.planFacing;
-        if (state.shape === 'full' && FAMILIES[brush].axis) edit.axis = 'y';
-        if (state.shape === 'pane') edit.axis = paneAxis(info || {});
-        runs.push(() => putEdit(edit, owner));
-      } else if (state.tool === 'erase') {
+      if (state.tool === 'erase') {
         if (!at) continue;
         const ex = findEdit(x, y, z);
         if (ex && ex.edit.shape !== 'erase' && ex.edit.shape !== 'paint') runs.push(() => { const e2 = findEdit(x, y, z); if (e2) e2.list.splice(e2.index, 1); });
@@ -1022,8 +1083,47 @@ function areaAction(r, info) {
   afterChange();
   syncPropValues();
   updateToolbar();
-  const verb = { place: 'Placed', erase: 'Erased', paint: 'Repainted' }[state.tool];
+  const verb = { erase: 'Erased', paint: 'Repainted' }[state.tool];
   toast(verb + ' ' + fmt(runs.length) + ' block' + (runs.length === 1 ? '' : 's'), false, { label: 'Undo', run: undo });
+}
+/**
+ * An Area-mode place drag becomes one fill object (a solid rectangle of the brush block) that
+ * can be selected, moved, resized and repainted like a box, instead of hundreds of loose blocks.
+ */
+function placeFill(r, info) {
+  const g = state.grid;
+  const round = state.area && state.circle;
+  let empty = 0;
+  for (let y = r.y0; y <= r.y1; y++) for (let z = r.z0; z <= r.z1; z++) for (let x = r.x0; x <= r.x1; x++) {
+    if (round && !inOutline('circle', r.x0, r.z0, r.x1 - r.x0 + 1, r.z1 - r.z0 + 1, x, z)) continue;
+    if (!g.blocks.has(blockKey(x, y, z))) empty++;
+  }
+  if (!empty) { toast('That area is already full', true); return; }
+  const d = state.design;
+  const fill = {
+    id: newId(d, 'f'), x: r.x0, z: r.z0, w: r.x1 - r.x0 + 1, d: r.z1 - r.z0 + 1, baseY: r.y0, h: r.y1 - r.y0 + 1,
+    material: state.brush, shape: state.shape, half: info.half || 'bottom',
+    facing: !info.fromPlan && info.facing ? info.facing : state.planFacing,
+    axis: state.shape === 'pane' ? paneAxis(info) : 'y',
+    outline: round ? 'circle' : 'rect', hollow: false,
+  };
+  beginChange(null);
+  d.fills.push(fill);
+  afterChange();
+  updateToolbar();
+  toast(`Made fill ${fill.id} (${fill.w}×${fill.d}${fill.h > 1 ? '×' + fill.h : ''})`, false, { label: 'Adjust', run: () => { setTool('select'); select(fill.id); } });
+}
+/** Alt+drag in the 3D view: select the hand-placed blocks inside the rectangle. */
+function selectBlocks(cells, { add = false } = {}) {
+  cells = cells.filter((c) => placedEdit(c));
+  if (state.tool !== 'select') setTool('select');
+  const list = add ? state.selectedBlocks.slice() : [];
+  const have = new Set(list.map(cellKey));
+  for (const c of cells) if (!have.has(cellKey(c))) { list.push(c); have.add(cellKey(c)); }
+  state.selectedBlocks = list;
+  if (viewer) viewer.setSelectedBlocks(list);
+  select(null, { keepBlocks: true });
+  if (!list.length) toast('No placed blocks in that rectangle');
 }
 const STAIR_ARROWS = { north: '↑', east: '→', south: '↓', west: '←' };
 function setTool(tool) {
@@ -1055,7 +1155,7 @@ function updateToolbar() {
   $('brushBtn').hidden = t !== 'paint' && t !== 'place';
   $('scopeSeg').hidden = t !== 'paint';
   $('areaSeg').hidden = t === 'select';
-  for (const b of $('areaSeg').querySelectorAll('button')) b.setAttribute('aria-pressed', String((b.dataset.area === 'area') === state.area));
+  for (const b of $('areaSeg').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.area === (!state.area ? 'one' : state.circle ? 'circle' : 'area')));
   $('shapeSeg').hidden = t !== 'place';
   const n = state.design ? countEdits() : 0;
   $('btnClearEdits').hidden = n === 0;
@@ -1065,7 +1165,7 @@ function updateToolbar() {
   $('brushBtn').querySelector('.mat-name').textContent = famName(state.brush);
   $('brushBtn').title = 'Brush material: ' + famName(state.brush);
   $('toolHint').hidden = t === 'select';
-  $('toolHint').textContent = (state.area ? AREA_HINTS[t] : TOOL_HINTS[t]) || '';
+  $('toolHint').textContent = ((state.area ? AREA_HINTS[t] : TOOL_HINTS[t]) || '').replace(/rectangle \(Shift = square\)|rectangle/, (m) => (state.area && state.circle ? 'circle' + (m.length > 9 ? ' (Shift = round)' : '') : m));
 }
 /** Every edit list with the cell offset that turns its coordinates into world cells. */
 function editLists() {
@@ -1200,8 +1300,14 @@ function onPlanMove(e) {
   ctx.strokeStyle = state.tool === 'erase' ? '#c0392b' : '#d9814a';
   ctx.lineWidth = 2;
   const px = 30 + (x0 - b.minX) * cell, pz = 20 + (z0 - b.minZ) * cell;
-  ctx.fillRect(px, pz, (x1 - x0) * cell, (z1 - z0) * cell);
-  ctx.strokeRect(px, pz, (x1 - x0) * cell, (z1 - z0) * cell);
+  if (state.area && state.circle) {
+    ctx.beginPath();
+    ctx.ellipse(px + (x1 - x0) * cell / 2, pz + (z1 - z0) * cell / 2, (x1 - x0) * cell / 2, (z1 - z0) * cell / 2, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+  } else {
+    ctx.fillRect(px, pz, (x1 - x0) * cell, (z1 - z0) * cell);
+    ctx.strokeRect(px, pz, (x1 - x0) * cell, (z1 - z0) * cell);
+  }
   ctx.restore();
 }
 function onPlanUp(e) {
@@ -1235,7 +1341,7 @@ function rerollVariation(id) {
 
 function rotateSelected(q) {
   const f = findObject(state.selectedId);
-  if (!f || (f.kind !== 'box' && f.kind !== 'segment')) return;
+  if (!f || f.kind === 'pillar') return;
   const sig = JSON.stringify(f.obj);
   let a = state.rotAnchor;
   if (!a || a.id !== f.obj.id || a.sig !== sig) a = { id: f.obj.id, start: JSON.parse(sig), q: 0 };
@@ -1958,8 +2064,8 @@ function wire() {
   $('planCanvas').addEventListener('pointermove', onPlanMove);
   $('planCanvas').addEventListener('pointerup', onPlanUp);
   $('planCanvas').addEventListener('pointercancel', () => { planDrag = null; renderPlan(); });
-  for (const b of $('areaSeg').querySelectorAll('button')) b.addEventListener('click', () => setArea(b.dataset.area === 'area'));
-  try { state.area = localStorage.getItem('rafter.area') === '1'; } catch (e) { /* ignore */ }
+  for (const b of $('areaSeg').querySelectorAll('button')) b.addEventListener('click', () => setArea(b.dataset.area));
+  try { const a = localStorage.getItem('rafter.area'); state.area = a === '1' || a === 'circle'; state.circle = a === 'circle'; } catch (e) { /* ignore */ }
   try { const b = localStorage.getItem('rafter.brush'); if (b && FAMILIES[b]) state.brush = b; } catch (e) { /* ignore */ }
   updateToolbar();
 

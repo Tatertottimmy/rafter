@@ -45,6 +45,23 @@ export const VARIATION_STYLES = ['patches', 'scatter', 'grime', 'streaks'];
 export const VARIATION_DEFAULTS = { wall: 0, roof: 0, style: 'patches', wallMix: '', wallMix2: '', roofMix: '', roofMix2: '', seed: 1 };
 // Hand edits: paint keeps the existing block's shape, place puts a new block, erase clears.
 export const EDIT_SHAPES = ['paint', 'full', 'slab', 'stair', 'pane', 'erase'];
+/** Block shapes a fill (a solid rectangle of one block) can be made of. */
+export const FILL_SHAPES = ['full', 'slab', 'stair', 'pane'];
+
+/**
+ * Is column (x, z) inside a w × d footprint at (x0, z0)? "circle" is the ellipse that fits
+ * the footprint, tested at cell centres; a hollow shape keeps only its one-block rim.
+ */
+export function inOutline(outline, x0, z0, w, d, x, z, hollow = false) {
+  const inside = (cx, cz) => {
+    if (cx < x0 || cz < z0 || cx >= x0 + w || cz >= z0 + d) return false;
+    if (outline !== 'circle') return true;
+    const u = (cx + 0.5 - (x0 + w / 2)) / (w / 2), v = (cz + 0.5 - (z0 + d / 2)) / (d / 2);
+    return u * u + v * v <= 1.08; // a little slack rounds small circles like hand-built ones
+  };
+  if (!inside(x, z)) return false;
+  return !hollow || !inside(x - 1, z) || !inside(x + 1, z) || !inside(x, z - 1) || !inside(x, z + 1);
+}
 export const EDITS_MAX = 50000;
 export const RISES = [0.5, 1, 1.5, 2, 3];
 export const RIDGE_CAPS = ['block', 'slab', 'wall'];
@@ -114,10 +131,11 @@ export function validateDesign(design) {
   d.boxes = Array.isArray(d.boxes) ? d.boxes : [];
   d.pillars = Array.isArray(d.pillars) ? d.pillars : [];
   d.segments = Array.isArray(d.segments) ? d.segments : [];
+  d.fills = Array.isArray(d.fills) ? d.fills : [];
 
   const used = new Set();
   const claim = (obj, prefix) => {
-    if (typeof obj.id !== 'string' || obj.id === '' || used.has(obj.id)) obj.id = newId({ boxes: d.boxes, pillars: d.pillars, segments: d.segments }, prefix, used);
+    if (typeof obj.id !== 'string' || obj.id === '' || used.has(obj.id)) obj.id = newId(d, prefix, used);
     used.add(obj.id);
   };
 
@@ -149,6 +167,7 @@ export function validateDesign(design) {
     r.profile = oneOf(r.profile, ROOF_PROFILES, 'straight');
     r.upturn = int(r.upturn, 0, 0, 16);           // blocks the corners rise (0 = off)
     r.upturnReach = int(r.upturnReach, 6, 1, 64); // how far along the eave the curl reaches
+    r.cut = int(r.cut, 0, 0, 128);                // chop the roof flat this many blocks above the eave (0 = off)
     // Any block can roof: families without slabs/stairs fall back to full blocks.
     r.material = familyKey(r.material, 'spruce', false);
     const det = b.details && typeof b.details === 'object' ? b.details : {};
@@ -194,6 +213,25 @@ export function validateDesign(design) {
     s.h = int(s.h, 3, 1, 256);
     s.material = familyKey(s.material, 'cobblestone', false);
   }
+
+  d.fills = d.fills.filter((f) => f && typeof f === 'object');
+  for (const f of d.fills) {
+    claim(f, 'f');
+    f.x = int(f.x, 0, -4096, 4096);
+    f.z = int(f.z, 0, -4096, 4096);
+    f.w = int(f.w, 1, 1, 256);
+    f.d = int(f.d, 1, 1, 256);
+    f.baseY = int(f.baseY, 0, -64, 320);
+    f.h = int(f.h, 1, 1, 128);
+    f.material = familyKey(f.material, 'oak_planks', false);
+    f.shape = oneOf(f.shape, FILL_SHAPES, 'full');
+    f.half = oneOf(f.half, ['bottom', 'top'], 'bottom');
+    f.facing = oneOf(f.facing, DIRS, 'north');
+    f.axis = oneOf(f.axis, ['x', 'y', 'z'], f.shape === 'pane' ? 'x' : 'y');
+    if (f.shape === 'pane' && f.axis === 'y') f.axis = 'x';
+    f.outline = oneOf(f.outline, ['rect', 'circle'], 'rect');
+    f.hollow = bool(f.hollow, false);
+  }
   d.edits = validateEdits(d.edits, false);
   return d;
 }
@@ -237,6 +275,14 @@ export function rotatePatch(kind, obj, q) {
   q = ((q % 4) + 4) % 4;
   if (!q) return {};
   const turn = (dir) => { for (let i = 0; i < q; i++) dir = CW[dir]; return dir; };
+  if (kind === 'fill') {
+    const cx = obj.x + obj.w / 2, cz = obj.z + obj.d / 2;
+    const odd = q % 2 === 1;
+    const w = odd ? obj.d : obj.w, d = odd ? obj.w : obj.d;
+    const patch = { x: Math.floor(cx - w / 2), z: Math.floor(cz - d / 2), w, d, facing: turn(obj.facing || 'north') };
+    if (odd && (obj.axis === 'x' || obj.axis === 'z')) patch.axis = obj.axis === 'x' ? 'z' : 'x';
+    return patch;
+  }
   if (kind === 'box') {
     const cx = obj.x + obj.w / 2, cz = obj.z + obj.d / 2;
     const odd = q % 2 === 1;
@@ -282,7 +328,7 @@ export function rotatePatch(kind, obj, q) {
 
 export function newId(design, prefix, extraUsed) {
   const used = new Set(extraUsed || []);
-  for (const list of [design?.boxes, design?.pillars, design?.segments]) {
+  for (const list of [design?.boxes, design?.pillars, design?.segments, design?.fills]) {
     if (Array.isArray(list)) for (const o of list) if (o && typeof o.id === 'string') used.add(o.id);
   }
   let n = 1;
@@ -330,6 +376,7 @@ export function defaultDesign() {
       { id: 'p2', x: 7, z: 13, baseY: 0, h: 3, material: 'oak_log' },
     ],
     segments: [],
+    fills: [],
   });
 }
 
@@ -513,7 +560,9 @@ function cornerLift(r, reg, cx, cz) {
 
 /** Surface height s_b(cx,cz) of one box at a column inside its region. */
 function boxSurface(b, reg, cx, cz) {
-  return baseSurface(b, reg, cx, cz) + cornerLift(b.roof, reg, cx, cz);
+  const s = baseSurface(b, reg, cx, cz) + cornerLift(b.roof, reg, cx, cz);
+  // Chopped top: the roof stops `cut` blocks above the eave and finishes flat there.
+  return b.roof.cut > 0 ? Math.min(s, b.baseY + b.wallH + b.roof.cut) : s;
 }
 function baseSurface(b, reg, cx, cz) {
   const r = b.roof;
@@ -986,6 +1035,21 @@ export function buildGrid(input) {
     for (const [x, z] of cols) {
       for (let y = sg.baseY; y < sg.baseY + sg.h; y++) {
         if (!has(x, y, z)) put(x, y, z, tag(fullBlock(sg.material, 'segment'), sg.id, 'material'));
+      }
+    }
+  }
+  // Fills: a solid rectangle of one block shape, only where nothing is built yet.
+  for (const f of design.fills || []) {
+    const make = () => {
+      if (f.shape === 'slab') return slabBlock(f.material, f.half, 'fill');
+      if (f.shape === 'stair') { pillarStairs = true; return stairBlock(f.material, f.facing, f.half, 'fill'); }
+      if (f.shape === 'pane') return paneBlock(f.material, f.axis, 'fill');
+      return fullBlock(f.material, 'fill', f.axis);
+    };
+    for (let y = f.baseY; y < f.baseY + f.h; y++) {
+      for (let z = f.z; z < f.z + f.d; z++) for (let x = f.x; x < f.x + f.w; x++) {
+        if (!inOutline(f.outline, f.x, f.z, f.w, f.d, x, z, f.hollow)) continue;
+        if (!has(x, y, z)) put(x, y, z, tag(make(), f.id, 'material'));
       }
     }
   }

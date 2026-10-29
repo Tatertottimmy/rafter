@@ -324,6 +324,9 @@ export class Viewer {
       const z0 = Math.min(s.z0, s.z1), z1 = Math.max(s.z0, s.z1) + 1;
       addProxy(x0, s.baseY, z0, x1, s.baseY + Math.max(1, s.h), z1, { type: 'segment', id: s.id, baseY: s.baseY });
     }
+    for (const f of design.fills || []) {
+      addProxy(f.x, f.baseY, f.z, f.x + f.w, f.baseY + f.h, f.z + f.d, { type: 'fill', id: f.id, baseY: f.baseY });
+    }
     this._rebuildSelection();
     this.requestRender();
   }
@@ -408,7 +411,7 @@ export class Viewer {
     this.tool = tool || 'select';
     this.toolOpts = opts || {};
     this.renderer.domElement.style.cursor = this.tool === 'select' ? '' : 'crosshair';
-    this._hoverKey = null;
+    this._hoverKey = '';  // differs from every real key, so the old preview is always cleared
     this._setHover(this._hoverEvt && this.tool !== 'select' ? this.pickBlock(this._hoverEvt) : null);
   }
 
@@ -474,6 +477,45 @@ export class Viewer {
     return blk && blk.role === 'placed' ? info.cell : null;
   }
 
+  /** Screen rectangle of an Alt+drag selection (client coords), or null to hide it. */
+  _drawMarquee(mq) {
+    if (!mq) { if (this._marqueeEl) this._marqueeEl.hidden = true; return; }
+    if (!this._marqueeEl) {
+      const el = document.createElement('div');
+      el.className = 'marquee';
+      el.style.cssText = 'position:absolute;pointer-events:none;z-index:5;border:1.5px dashed var(--accent,#d9814a);background:color-mix(in srgb, var(--accent,#d9814a) 14%, transparent);';
+      this.container.appendChild(el);
+      this._marqueeEl = el;
+    }
+    const r = this.container.getBoundingClientRect();
+    const el = this._marqueeEl;
+    el.hidden = false;
+    el.style.left = (Math.min(mq.x0, mq.x1) - r.left) + 'px';
+    el.style.top = (Math.min(mq.y0, mq.y1) - r.top) + 'px';
+    el.style.width = Math.abs(mq.x1 - mq.x0) + 'px';
+    el.style.height = Math.abs(mq.y1 - mq.y0) + 'px';
+  }
+
+  /** Hand-placed blocks whose centre lands inside a screen rectangle (hidden layers left out). */
+  _cellsInRect(mq) {
+    const out = [];
+    if (!this.grid || !this.grid.blocks) return out;
+    const r = this.renderer.domElement.getBoundingClientRect();
+    const xa = Math.min(mq.x0, mq.x1), xb = Math.max(mq.x0, mq.x1), ya = Math.min(mq.y0, mq.y1), yb = Math.max(mq.y0, mq.y1);
+    const v = new THREE.Vector3();
+    this.camera.updateMatrixWorld();
+    for (const [key, blk] of this.grid.blocks) {
+      if (blk.role !== 'placed') continue;
+      const c = key.split(',').map(Number);
+      if (this.sliceY != null && c[1] > this.sliceY) continue;
+      v.set(c[0] + 0.5, c[1] + 0.5, c[2] + 0.5).project(this.camera);
+      if (v.z < -1 || v.z > 1) continue; // behind the camera
+      const sx = r.left + (v.x + 1) / 2 * r.width, sy = r.top + (1 - v.y) / 2 * r.height;
+      if (sx >= xa && sx <= xb && sy >= ya && sy <= yb) out.push(c);
+    }
+    return out;
+  }
+
   _areaMode() { return !!(this.toolOpts && this.toolOpts.area) && this.tool !== 'select'; }
 
   /** Translucent slab over the cells of an area drag (or nothing). */
@@ -485,8 +527,12 @@ export class Viewer {
       const y0 = Math.min(a.anchor[1], a.cur[1]), y1 = Math.max(a.anchor[1], a.cur[1]) + 1;
       const z0 = Math.min(a.anchor[2], a.cur[2]), z1 = Math.max(a.anchor[2], a.cur[2]) + 1;
       const color = new THREE.Color(this.tool === 'erase' ? cssVar(this.container, '--danger', '#c0392b') : cssVar(this.container, '--accent', '#d9814a'));
-      const geo = new THREE.BoxGeometry(x1 - x0 + 0.02, y1 - y0 + 0.02, z1 - z0 + 0.02);
-      const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true }));
+      // Circle mode on a layer: the oval that fits the rectangle.
+      const round = this.toolOpts && this.toolOpts.circle && a.wallAxis === null;
+      const geo = round
+        ? new THREE.CylinderGeometry(0.5, 0.5, 1, 48).scale(x1 - x0 + 0.02, y1 - y0 + 0.02, z1 - z0 + 0.02)
+        : new THREE.BoxGeometry(x1 - x0 + 0.02, y1 - y0 + 0.02, z1 - z0 + 0.02);
+      const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true }));
       line.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
       line.renderOrder = 20;
       const fill = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, depthWrite: false }));
@@ -693,6 +739,7 @@ export class Viewer {
     for (const b of d.boxes || []) if (b.id === id) return { type: 'box', obj: b };
     for (const p of d.pillars || []) if (p.id === id) return { type: 'pillar', obj: p };
     for (const s of d.segments || []) if (s.id === id) return { type: 'segment', obj: s };
+    for (const f of d.fills || []) if (f.id === id) return { type: 'fill', obj: f };
     return null;
   }
 
@@ -704,18 +751,20 @@ export class Viewer {
     const accent = new THREE.Color(cssVar(this.container, '--accent', '#d9814a'));
     const solid = new THREE.LineBasicMaterial({ color: accent, depthTest: false, transparent: true });
     const { type, obj } = found;
-    if (type === 'box') {
-      const E = obj.baseY + obj.wallH;
+    if (type === 'box' || type === 'fill') {
+      const E = obj.baseY + (type === 'fill' ? obj.h : obj.wallH);
       const oh = Math.max(0, (obj.roof && obj.roof.overhang) | 0);
       // footprint (solid) at baseY and at eave height
       const l1 = this._rectLine(obj.x, obj.z, obj.x + obj.w, obj.z + obj.d, obj.baseY + 0.02, solid); l1.renderOrder = 10;
       const l2 = this._rectLine(obj.x, obj.z, obj.x + obj.w, obj.z + obj.d, E + 0.02, solid); l2.renderOrder = 10;
       this.selGroup.add(l1, l2);
-      // overhang outline (dashed) at eave height
-      const dashed = new THREE.LineDashedMaterial({ color: accent, dashSize: 0.45, gapSize: 0.25, depthTest: false, transparent: true });
-      const l3 = this._rectLine(obj.x - oh, obj.z - oh, obj.x + obj.w + oh, obj.z + obj.d + oh, E + 0.02, dashed, true);
-      l3.renderOrder = 10;
-      this.selGroup.add(l3);
+      if (oh) {
+        // overhang outline (dashed) at eave height
+        const dashed = new THREE.LineDashedMaterial({ color: accent, dashSize: 0.45, gapSize: 0.25, depthTest: false, transparent: true });
+        const l3 = this._rectLine(obj.x - oh, obj.z - oh, obj.x + obj.w + oh, obj.z + obj.d + oh, E + 0.02, dashed, true);
+        l3.renderOrder = 10;
+        this.selGroup.add(l3);
+      }
       // 4 resize handles at mid-edges of the top of the footprint
       const hg = new THREE.BoxGeometry(0.5, 0.5, 0.5);
       const hm = new THREE.MeshBasicMaterial({ color: accent, depthTest: false, transparent: true, opacity: 0.95 });
@@ -728,8 +777,8 @@ export class Viewer {
         this.selGroup.add(h);
         this.handles.push(h);
       }
-      this._addRotateHandle(obj, 'box', obj.x - oh, obj.z - oh, E, accent, solid);
-      this._addMoveGizmo(obj, obj.x + obj.w / 2, obj.baseY + Math.max(1, obj.wallH) / 2, obj.z + obj.d / 2);
+      this._addRotateHandle(obj, type, obj.x - oh, obj.z - oh, E, accent, solid);
+      this._addMoveGizmo(obj, obj.x + obj.w / 2, (obj.baseY + E) / 2, obj.z + obj.d / 2);
     } else if (type === 'pillar') {
       const n = obj.size || 1;
       const l = this._rectLine(obj.x, obj.z, obj.x + n, obj.z + n, obj.baseY + 0.02, solid); l.renderOrder = 10;
@@ -862,6 +911,15 @@ export class Viewer {
   _onPointerDown(e) {
     if (this._disposed) return;
     if (e.button !== 0) { this._down = null; return; }
+    // Alt+drag: rubber-band select the hand-placed blocks inside a screen rectangle (any tool).
+    if (e.altKey) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      this.controls.enabled = false;
+      try { this.renderer.domElement.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+      this._marquee = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY, add: e.shiftKey || e.ctrlKey || e.metaKey, pointerId: e.pointerId };
+      return;
+    }
     if (this.tool !== 'select') {
       this._down = { x: e.clientX, y: e.clientY, hit: null, tool: true };
       // Area mode: drag a rectangle on the layer of the block you start on.
@@ -952,7 +1010,7 @@ export class Viewer {
     };
     if (hit.type === 'rotate') {
       const o = found.obj;
-      this._drag.center = found.type === 'box'
+      this._drag.center = found.type === 'box' || found.type === 'fill'
         ? { x: o.x + o.w / 2, z: o.z + o.d / 2 }
         : { x: (Math.min(o.x0, o.x1) + Math.max(o.x0, o.x1) + 1) / 2, z: (Math.min(o.z0, o.z1) + Math.max(o.z0, o.z1) + 1) / 2 };
       this._drag.a0 = Math.atan2(p0.z - this._drag.center.z, p0.x - this._drag.center.x);
@@ -982,6 +1040,13 @@ export class Viewer {
   }
 
   _onPointerMove(e) {
+    const mq = this._marquee;
+    if (mq) {
+      e.stopImmediatePropagation();
+      mq.x1 = e.clientX; mq.y1 = e.clientY;
+      this._drawMarquee(mq);
+      return;
+    }
     const ar = this._area;
     if (ar) {
       e.stopImmediatePropagation();
@@ -998,6 +1063,12 @@ export class Viewer {
         const p = this._planePoint(e, ar.planeY);
         if (!p) return;
         cur = [Math.floor(p.x), ar.y, Math.floor(p.z)];
+        if (e.shiftKey) {
+          // Shift: a square (or a round circle), sized by the longer side.
+          const dx = cur[0] - ar.anchor[0], dz = cur[2] - ar.anchor[2], m = Math.max(Math.abs(dx), Math.abs(dz));
+          cur[0] = ar.anchor[0] + (dx < 0 ? -m : m);
+          cur[2] = ar.anchor[2] + (dz < 0 ? -m : m);
+        }
       }
       if (cur[0] === ar.cur[0] && cur[1] === ar.cur[1] && cur[2] === ar.cur[2]) return;
       ar.cur = cur;
@@ -1079,7 +1150,7 @@ export class Viewer {
       }
       // Shift: keep the footprint square. The side being dragged sets the size; the other
       // axis grows from its north / west edge.
-      if (e.shiftKey && d.objType === 'box') {
+      if (e.shiftKey && (d.objType === 'box' || d.objType === 'fill')) {
         if (d.dir === 'east' || d.dir === 'west') dd = w; else w = dd;
         z = d.dir === 'north' ? z : s.z;
         x = d.dir === 'west' ? x : s.x;
@@ -1089,6 +1160,29 @@ export class Viewer {
   }
 
   _onPointerUp(e) {
+    const mq = this._marquee;
+    if (mq) {
+      e.stopImmediatePropagation();
+      try { this.renderer.domElement.releasePointerCapture(mq.pointerId); } catch { /* ignore */ }
+      this._marquee = null;
+      this._down = null;
+      this.controls.enabled = true;
+      this._drawMarquee(null);
+      if (e.type !== 'pointerup') return;
+      if (Math.hypot(mq.x1 - mq.x0, mq.y1 - mq.y0) < 4) {
+        // A plain Alt+click: pick up a material with a block tool, or select one placed block.
+        if (this.tool !== 'select') {
+          const info = this.pickBlock(e);
+          if (info && this.cb.onBlockClick) this.cb.onBlockClick(info, { alt: true, shift: false });
+        } else {
+          const cell = this._placedAt(e);
+          if (cell && this.cb.onSelectBlock) this.cb.onSelectBlock(cell, { add: mq.add });
+        }
+        return;
+      }
+      if (this.cb.onMarquee) this.cb.onMarquee(this._cellsInRect(mq), { add: mq.add });
+      return;
+    }
     const ar = this._area;
     if (ar) {
       e.stopImmediatePropagation();

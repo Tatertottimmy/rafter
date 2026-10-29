@@ -601,7 +601,7 @@
         <p class="tool-hint" id="toolHint" hidden></p>
         <div class="toolbar" id="toolbar" role="toolbar" aria-label="Edit tools">
           <div class="seg hud" id="toolSeg">
-            <button type="button" data-tool="select" aria-pressed="true" title="Select, move, resize and rotate objects (V)">Select</button>
+            <button type="button" data-tool="select" aria-pressed="true" title="Select, move, resize and rotate objects (V). Alt+drag selects placed blocks in a rectangle">Select</button>
             <button type="button" data-tool="paint" aria-pressed="false" title="Paint walls, roofs or single blocks (B)">Paint</button>
             <button type="button" data-tool="place" aria-pressed="false" title="Place single blocks (P)">Place</button>
             <button type="button" data-tool="erase" aria-pressed="false" title="Remove single blocks (E)">Erase</button>
@@ -616,6 +616,7 @@
           <div class="seg hud" id="areaSeg" hidden>
             <button type="button" data-area="one" aria-pressed="true" title="Click acts on one block">One</button>
             <button type="button" data-area="area" aria-pressed="false" title="Drag a rectangle to fill, clear or repaint a whole floor (A)">Area</button>
+            <button type="button" data-area="circle" aria-pressed="false" title="Drag out a circle or oval (Shift keeps it round)">Circle</button>
           </div>
           <div class="seg hud" id="shapeSeg" hidden>
             <button type="button" data-shape="full" aria-pressed="true">Block</button>
