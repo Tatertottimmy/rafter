@@ -836,3 +836,14 @@ test('scaleDesign grows the whole build in proportion, keeping relative placemen
   assert.equal(one.boxes[0].w, d.boxes[0].w * 2);
   assert.deepEqual(one.boxes[1], d.boxes[1]);
 });
+
+test('texture variation mixes in up to six chosen (or auto) blocks', () => {
+  const b = box({ w: 15, d: 15, wallH: 8, wallMaterial: 'stone_bricks', variation: { wall: 60, style: 'scatter', wallMixCount: 4, wallMix: 'mossy_stone_bricks', wallMix2: 'cracked_stone_bricks', wallMix3: 'andesite', wallMix4: 'tuff_bricks' } });
+  const g = buildGrid(design([b]));
+  const mats = new Set([...g.blocks.values()].filter((k) => k.path === 'wallMaterial').map((k) => k.mat));
+  for (const m of ['stone_bricks', 'mossy_stone_bricks', 'cracked_stone_bricks', 'andesite', 'tuff_bricks']) assert.ok(mats.has(m), m);
+  // left on Auto, a bigger mix still finds different look-alikes
+  const auto = box({ w: 15, d: 15, wallH: 8, wallMaterial: 'oak', variation: { wall: 60, style: 'scatter', wallMixCount: 5 } });
+  const am = new Set([...buildGrid(design([auto])).blocks.values()].filter((k) => k.path === 'wallMaterial').map((k) => k.mat));
+  assert.ok(am.size >= 4, [...am].join(','));
+});

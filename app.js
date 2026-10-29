@@ -1,6 +1,6 @@
 // app.js — Rafter UI: state, panels, wiring, persistence, downloads. (UI owns)
 import { FAMILIES, roofFamilies, fullFamilies, GROUP_ORDER } from './blocks.js';
-import { buildGrid, decodeGrid, scaleDesign, defaultDesign, materialTotals, newId, inOutline, validateDesign, rotatePatch, suggestVariants, blockKey, DETAIL_DEFAULTS, VARIATION_DEFAULTS, UPTURN_TYPES } from './engine.js';
+import { buildGrid, decodeGrid, scaleDesign, MIX_KEYS, MIX_MAX, defaultDesign, materialTotals, newId, inOutline, validateDesign, rotatePatch, suggestVariants, blockKey, DETAIL_DEFAULTS, VARIATION_DEFAULTS, UPTURN_TYPES } from './engine.js';
 import { encodeLitematic, encodeSchem } from './export.js';
 import { swatchDataURL, familyIcon } from './textures.js';
 import { drawLayer, layerLegend, layerRange } from './plans.js';
@@ -544,7 +544,16 @@ const FILL_SHAPE_OPTIONS = [['full', 'Full blocks'], ['slab', 'Slabs'], ['stair'
 const PILLAR_TRIM = [['none', 'None'], ['block', 'Block ring'], ['stairs', 'Stair ring'], ['slab', 'Slab ring']];
 const VAR = (k) => (o) => !!(o.variation && o.variation[k] > 0);
 const STYLE_OPTIONS = [['patches', 'Patches'], ['scatter', 'Scatter'], ['grime', 'Grime (heavier low down)'], ['streaks', 'Streaks (drip marks)']];
-const autoMix = (from, i) => (o) => { const v = suggestVariants(getPath(o, from)); return v[i] || v[0] || null; };
+// What an Auto mix slot will use: the same pick as the engine (chosen slots first, then the
+// next look-alikes in order).
+const autoMix = (surface, from, i) => (o) => {
+  const va = o.variation || {}, base = getPath(o, from);
+  const keys = MIX_KEYS[surface].slice(0, va[surface + 'MixCount'] || 2);
+  const v = suggestVariants(base, Math.max(2, keys.length)).filter((k) => !keys.some((key) => va[key] === k));
+  let n = 0;
+  for (let j = 0; j < i; j++) if (!(va[keys[j]] && FAMILIES[va[keys[j]]] && va[keys[j]] !== base)) n++;
+  return v[n] || null;
+};
 const SCHEMA = {
   box: [
     { group: 'Footprint', fields: [
@@ -622,10 +631,12 @@ const SCHEMA = {
       { path: ['variation', 'wall'], label: 'Wall variation', type: 'range', min: 0, max: 80, step: 5, unit: '%', wide: true },
       { path: ['variation', 'roof'], label: 'Roof variation', type: 'range', min: 0, max: 80, step: 5, unit: '%', wide: true },
       { path: ['variation', 'style'], label: 'Pattern', type: 'select', options: STYLE_OPTIONS, wide: true, show: (o) => VAR('wall')(o) || VAR('roof')(o) },
-      { path: ['variation', 'wallMix'], label: 'Wall mix 1', type: 'material', auto: autoMix(['wallMaterial'], 0), wide: true, show: VAR('wall') },
-      { path: ['variation', 'wallMix2'], label: 'Wall mix 2', type: 'material', auto: autoMix(['wallMaterial'], 1), wide: true, show: VAR('wall') },
-      { path: ['variation', 'roofMix'], label: 'Roof mix 1', type: 'material', auto: autoMix(['roof', 'material'], 0), roof: true, wide: true, show: VAR('roof') },
-      { path: ['variation', 'roofMix2'], label: 'Roof mix 2', type: 'material', auto: autoMix(['roof', 'material'], 1), roof: true, wide: true, show: VAR('roof') },
+      { path: ['variation', 'wallMixCount'], label: 'Wall mix blocks', type: 'int', min: 1, max: MIX_MAX, show: VAR('wall'), hint: 'How many different blocks the walls mix in. Pick each one below, or leave it on Auto for a look-alike.' },
+      ...MIX_KEYS.wall.map((k, i) => ({ path: ['variation', k], label: 'Wall mix ' + (i + 1), type: 'material', auto: autoMix('wall', ['wallMaterial'], i), wide: true,
+        show: (o) => VAR('wall')(o) && i < ((o.variation && o.variation.wallMixCount) || 2) })),
+      { path: ['variation', 'roofMixCount'], label: 'Roof mix blocks', type: 'int', min: 1, max: MIX_MAX, show: VAR('roof'), hint: 'How many different blocks the roof mixes in. Pick each one below, or leave it on Auto for a look-alike.' },
+      ...MIX_KEYS.roof.map((k, i) => ({ path: ['variation', k], label: 'Roof mix ' + (i + 1), type: 'material', auto: autoMix('roof', ['roof', 'material'], i), roof: true, wide: true,
+        show: (o) => VAR('roof')(o) && i < ((o.variation && o.variation.roofMixCount) || 2) })),
       { path: ['variation', 'reroll'], label: 'Reshuffle', type: 'action', wide: true, hint: 'Same mix, new random layout.', show: (o) => VAR('wall')(o) || VAR('roof')(o), run: (id) => rerollVariation(id) },
     ] },
   ],
@@ -1571,7 +1582,7 @@ function applyPreset(p) {
     b.details = det;
     // Presets without texture settings switch variation off, so styles don't leak across.
     const va = { ...VARIATION_DEFAULTS, ...(p.variation || {}) };
-    for (const k of ['wallMix', 'wallMix2', 'roofMix', 'roofMix2']) if (va[k] && !FAMILIES[va[k]]) va[k] = '';
+    for (const k of [...MIX_KEYS.wall, ...MIX_KEYS.roof]) if (va[k] && !FAMILIES[va[k]]) va[k] = '';
     b.variation = { ...va, seed: (b.variation && b.variation.seed) || 1 };
   }
   for (const pl of d.pillars) pl.material = ok(p.pillar, pl.material);

@@ -42,7 +42,9 @@ const PILLAR_ENUMS = { shape: ['block', 'wall'], base: ['none', 'block', 'stairs
 // Texture variation: swap a share of wall / roof blocks for look-alike materials so big
 // surfaces don't read as one flat repeat. Mix '' = pick automatically (suggestVariants).
 export const VARIATION_STYLES = ['patches', 'scatter', 'grime', 'streaks'];
-export const VARIATION_DEFAULTS = { wall: 0, roof: 0, style: 'patches', wallMix: '', wallMix2: '', roofMix: '', roofMix2: '', seed: 1 };
+export const MIX_MAX = 6; // blocks a surface's variation can mix in
+export const MIX_KEYS = { wall: ['wallMix', 'wallMix2', 'wallMix3', 'wallMix4', 'wallMix5', 'wallMix6'], roof: ['roofMix', 'roofMix2', 'roofMix3', 'roofMix4', 'roofMix5', 'roofMix6'] };
+export const VARIATION_DEFAULTS = { wall: 0, roof: 0, style: 'patches', wallMixCount: 2, roofMixCount: 2, ...Object.fromEntries([...MIX_KEYS.wall, ...MIX_KEYS.roof].map((k) => [k, ''])), seed: 1 };
 // Hand edits: paint keeps the existing block's shape, place puts a new block, erase clears.
 export const EDIT_SHAPES = ['paint', 'full', 'slab', 'stair', 'pane', 'erase'];
 /** Block shapes a fill (a solid rectangle of one block) can be made of. */
@@ -186,7 +188,9 @@ export function validateDesign(design) {
     va.wall = int(va.wall, 0, 0, 100);
     va.roof = int(va.roof, 0, 0, 100);
     va.style = oneOf(va.style, VARIATION_STYLES, 'patches');
-    for (const k of ['wallMix', 'wallMix2', 'roofMix', 'roofMix2']) va[k] = va[k] === '' || va[k] == null ? '' : familyKey(va[k], '', false);
+    va.wallMixCount = int(va.wallMixCount, 2, 1, MIX_MAX);
+    va.roofMixCount = int(va.roofMixCount, 2, 1, MIX_MAX);
+    for (const k of [...MIX_KEYS.wall, ...MIX_KEYS.roof]) va[k] = va[k] === '' || va[k] == null ? '' : familyKey(va[k], '', false);
     va.seed = int(va.seed, 1, 0, 999999);
     b.edits = validateEdits(b.edits, true);
   }
@@ -553,14 +557,25 @@ function variationValue(style, seed, x, y, z, baseY, E) {
     }
   }
 }
-function pickMixes(a, b, base) {
-  const out = [a, b].filter((k) => k && FAMILIES[k] && k !== base);
-  return out.length ? out : suggestVariants(base).slice(0, 2);
+/**
+ * The blocks one surface mixes in: each slot is the block chosen for it, or else (Auto) the
+ * next look-alike suggestion; no repeats, never the base block itself.
+ */
+function pickMixes(slots, base) {
+  const auto = suggestVariants(base, Math.max(2, slots.length));
+  const out = [];
+  let next = 0;
+  for (const k of slots) {
+    if (k && FAMILIES[k] && k !== base) { if (!out.includes(k)) out.push(k); continue; }
+    while (next < auto.length && (out.includes(auto[next]) || slots.includes(auto[next]))) next++;
+    if (next < auto.length) out.push(auto[next++]);
+  }
+  return out;
 }
 
 const VARIANT_PREFIXES = ['mossy_', 'cracked_', 'chiseled_', 'weathered_', 'exposed_'];
 /** Look-alike materials for breaking up a surface: named variants first, then nearest colours. */
-export function suggestVariants(key) {
+export function suggestVariants(key, n = 2) {
   const f = FAMILIES[key];
   if (!f) return [];
   const out = [];
@@ -570,7 +585,7 @@ export function suggestVariants(key) {
   for (const p of VARIANT_PREFIXES) add(p + base);
   if (base.endsWith('_tiles')) add(base.replace(/_tiles$/, '_bricks'));
   if (base.endsWith('_bricks')) add(base.replace(/_bricks$/, '_tiles'));
-  if (out.length >= 2) return out;
+  if (out.length >= n) return out;
   const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
   const [r, g, b] = rgb(f.color);
   const dist = (k) => { const [r2, g2, b2] = rgb(FAMILIES[k].color); return Math.hypot(r - r2, g - g2, b - b2); };
@@ -579,12 +594,14 @@ export function suggestVariants(key) {
       && (!f.stairs || FAMILIES[k].stairs) && FAMILIES[k].pattern === f.pattern)
     .sort((a, c) => dist(a) - dist(c));
   for (const k of near) if (dist(k) < 45) add(k);
+  // Asked for a bigger mix: widen to further same-pattern colours.
+  if (n > 2) for (const k of near) { if (out.length >= n) break; if (dist(k) < 90) add(k); }
   if (!out.length) {
     // Nothing close in the same pattern: settle for the nearest opaque colours anywhere.
     const loose = Object.keys(FAMILIES)
       .filter((k) => k !== key && !FAMILIES[k].transparent && (!f.stairs || FAMILIES[k].stairs) && !['Ores', 'Leaves', 'Glazed terracotta'].includes(FAMILIES[k].group))
       .sort((a, c) => dist(a) - dist(c));
-    for (const k of loose.slice(0, 2)) if (dist(k) < 50) add(k);
+    for (const k of loose.slice(0, Math.max(2, n))) if (dist(k) < (n > 2 ? 80 : 50)) add(k);
   }
   return out;
 }
@@ -1274,8 +1291,8 @@ export function buildGrid(input) {
     const va = b.variation;
     if (!va.wall && !va.roof) continue;
     const mixes = {
-      wallMaterial: va.wall ? pickMixes(va.wallMix, va.wallMix2, b.wallMaterial) : null,
-      'roof.material': va.roof ? pickMixes(va.roofMix, va.roofMix2, b.roof.material) : null,
+      wallMaterial: va.wall ? pickMixes(MIX_KEYS.wall.slice(0, va.wallMixCount).map((k) => va[k]), b.wallMaterial) : null,
+      'roof.material': va.roof ? pickMixes(MIX_KEYS.roof.slice(0, va.roofMixCount).map((k) => va[k]), b.roof.material) : null,
     };
     const amount = { wallMaterial: va.wall / 100, 'roof.material': va.roof / 100 };
     const E = b.baseY + b.wallH;
@@ -1290,8 +1307,10 @@ export function buildGrid(input) {
         ? variationValue(va.style, va.seed, x, y, z, E - 1, roofTop) // roofs weather from the eaves up
         : variationValue(va.style, va.seed, x, y, z, b.baseY, E);
       if (v >= amount[blk.path]) continue;
-      // Two mixes: split the hits between them with an independent hash.
-      const m = mix.length > 1 && hash3(x, y, z, va.seed + 7) < 0.5 ? mix[1] : mix[0];
+      // Several mixes: share the hits out between them with an independent hash. (With two,
+      // the low half goes to the second, as it always has.)
+      const h = Math.min(mix.length - 1, Math.floor(hash3(x, y, z, va.seed + 7) * mix.length));
+      const m = mix[mix.length === 2 ? 1 - h : h];
       const nb = reskin(blk, m);
       if (nb) blocks.set(key, nb);
     }
