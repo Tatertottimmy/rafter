@@ -1,6 +1,6 @@
 // app.js — Rafter UI: state, panels, wiring, persistence, downloads. (UI owns)
 import { FAMILIES, roofFamilies, fullFamilies, GROUP_ORDER } from './blocks.js';
-import { buildGrid, decodeGrid, defaultDesign, materialTotals, newId, inOutline, validateDesign, rotatePatch, suggestVariants, blockKey, DETAIL_DEFAULTS, VARIATION_DEFAULTS, UPTURN_TYPES } from './engine.js';
+import { buildGrid, decodeGrid, scaleDesign, defaultDesign, materialTotals, newId, inOutline, validateDesign, rotatePatch, suggestVariants, blockKey, DETAIL_DEFAULTS, VARIATION_DEFAULTS, UPTURN_TYPES } from './engine.js';
 import { encodeLitematic, encodeSchem } from './export.js';
 import { swatchDataURL, familyIcon } from './textures.js';
 import { drawLayer, layerLegend, layerRange } from './plans.js';
@@ -2121,6 +2121,44 @@ function wire() {
   $('btnAddPillar').addEventListener('click', addPillar);
   $('btnAddSegment').addEventListener('click', addSegment);
   $('btnAutoDetails').addEventListener('click', () => autoDetails(null));
+  // Scale: the whole build, or the selected object, by a factor.
+  const scaleEst = () => {
+    const k = +$('scaleFactor').value || 1;
+    const one = $('scaleScope').value === 'one';
+    const n = state.grid ? state.grid.blocks.size : 0;
+    $('scaleEst').textContent = one ? '' : n ? `about ${fmt(Math.round(n * k * k))} blocks` : '';
+  };
+  const openScale = (open) => {
+    $('scaleBox').hidden = !open;
+    $('btnScale').setAttribute('aria-expanded', String(open));
+    if (open) {
+      const sel = state.selectedId && findObject(state.selectedId);
+      $('scaleScope').querySelector('[value=one]').disabled = !sel;
+      if (!sel) $('scaleScope').value = 'all';
+      scaleEst();
+      $('scaleFactor').focus();
+    }
+  };
+  $('btnScale').addEventListener('click', () => openScale($('scaleBox').hidden));
+  $('scaleCancel').addEventListener('click', () => openScale(false));
+  $('scaleFactor').addEventListener('input', scaleEst);
+  $('scaleScope').addEventListener('change', scaleEst);
+  for (const b of $('scaleBox').querySelectorAll('[data-scale]')) b.addEventListener('click', () => { $('scaleFactor').value = b.dataset.scale; scaleEst(); });
+  $('scaleFactor').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('scaleApply').click(); if (e.key === 'Escape') openScale(false); });
+  $('scaleApply').addEventListener('click', () => {
+    const k = Math.min(8, Math.max(0.25, +$('scaleFactor').value || 1));
+    if (k === 1) { openScale(false); return; }
+    const one = $('scaleScope').value === 'one' && state.selectedId && findObject(state.selectedId) ? state.selectedId : null;
+    beginChange(null);
+    const { design, dropped } = scaleDesign(state.design, k, { only: one });
+    state.design = design;
+    afterChange();
+    renderProps(true);
+    openScale(false);
+    if (viewer && !one) setTimeout(() => viewer && viewer.frameAll(), 400);
+    const what = one ? (objectLabel(findObject(one)) || 'Object') : 'Build';
+    toast(`${what} scaled ×${k}` + (dropped ? ` (${fmt(dropped)} hand-placed blocks over the limit were left out)` : ''), !!dropped, { label: 'Undo', run: undo });
+  });
   $('btnPresets').addEventListener('click', (e) => openPresets(e.currentTarget));
 
   $('sliceSlider').addEventListener('input', (e) => setLayer(Number(e.target.value)));

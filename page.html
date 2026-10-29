@@ -206,6 +206,10 @@
   .section:last-child { border-bottom: 0; }
   .section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
   .add-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .scale-box { display: flex; flex-direction: column; gap: 6px; padding: 8px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: var(--radius); }
+  .scale-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+  .scale-row input[type=number] { width: 64px; }
+  .scale-quick { display: inline-flex; gap: 4px; }
 
   /* object list */
   .obj-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
@@ -566,6 +570,30 @@
           <button class="btn small" id="btnAddPillar">+ Pillar</button>
           <button class="btn small" id="btnAddSegment">+ Wall segment</button>
           <button class="btn small" id="btnAutoDetails" title="Add trims, corner posts, beams, a foundation course and windows to every box">Auto details</button>
+          <button class="btn small" id="btnScale" aria-expanded="false" aria-controls="scaleBox" title="Make the whole build (or one object) bigger or smaller, keeping its proportions">Scale…</button>
+        </div>
+        <div class="scale-box" id="scaleBox" hidden>
+          <div class="scale-row">
+            <label for="scaleFactor">Scale by ×</label>
+            <input type="number" id="scaleFactor" min="0.25" max="8" step="0.25" value="2">
+            <span class="scale-quick">
+              <button type="button" class="btn small" data-scale="0.5">½</button>
+              <button type="button" class="btn small" data-scale="1.5">1.5</button>
+              <button type="button" class="btn small" data-scale="2">2</button>
+              <button type="button" class="btn small" data-scale="3">3</button>
+            </span>
+          </div>
+          <div class="scale-row">
+            <select id="scaleScope" aria-label="What to scale">
+              <option value="all">Whole build</option>
+              <option value="one">Selected object only</option>
+            </select>
+            <span class="muted mono" id="scaleEst"></span>
+          </div>
+          <div class="scale-row">
+            <button type="button" class="btn small primary" id="scaleApply">Scale</button>
+            <button type="button" class="btn small" id="scaleCancel">Cancel</button>
+          </div>
         </div>
         <ul class="obj-list" id="objectList" aria-label="Objects"></ul>
       </section>

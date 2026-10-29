@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { FAMILIES, FAMILY_KEYS, roofFamilies, fullFamilies } from '../blocks.js';
 import {
   buildGrid, blockKey, parseKey, stateString, defaultDesign, materialTotals, newId, validateDesign, rotatePatch, suggestVariants,
-  encodeGrid, decodeGrid,
+  encodeGrid, decodeGrid, scaleDesign,
 } from '../engine.js';
 
 // ---------------------------------------------------------------------------------
@@ -805,4 +805,34 @@ test('encodeGrid / decodeGrid round-trip a grid', () => {
   assert.deepEqual(back.min, g.min);
   assert.deepEqual(back.max, g.max);
   for (const [k, b] of g.blocks) assert.deepEqual(back.blocks.get(k), b, k);
+});
+
+test('scaleDesign grows the whole build in proportion, keeping relative placement', () => {
+  const d = defaultDesign();
+  const { design: big } = scaleDesign(d, 2);
+  assert.equal(big.boxes.length, d.boxes.length);
+  // every box doubles; boxes that touched still touch; ground stays at the same level
+  for (let i = 0; i < d.boxes.length; i++) {
+    const a = d.boxes[i], b = big.boxes[i];
+    assert.equal(b.w, a.w * 2); assert.equal(b.d, a.d * 2); assert.equal(b.wallH, a.wallH * 2);
+    assert.equal(b.roof.rise, a.roof.rise, 'pitch kept');
+  }
+  const minY = (x) => Math.min(...x.boxes.map((b) => b.baseY));
+  assert.equal(minY(big), minY(d));
+  // relative offsets double too
+  const dx = (x) => x.boxes[1].x - x.boxes[0].x;
+  assert.equal(dx(big), dx(d) * 2);
+  // the build roughly doubles in each direction, and builds cleanly
+  const g0 = buildGrid(d), g1 = buildGrid(big);
+  const ext = (g) => [g.max.x - g.min.x + 1, g.max.y - g.min.y + 1, g.max.z - g.min.z + 1];
+  ext(g1).forEach((v, i) => assert.ok(v >= ext(g0)[i] * 1.7 && v <= ext(g0)[i] * 2.3, `axis ${i}: ${ext(g0)[i]} -> ${v}`));
+  // hand-placed blocks become 2x2x2
+  const withEdit = { ...d, edits: [{ x: 30, y: 0, z: 30, shape: 'full', mat: 'stone' }] };
+  assert.equal(scaleDesign(withEdit, 2).design.edits.length, 8);
+  // scaling down never makes anything smaller than a block; only= scales one object
+  const tiny = scaleDesign(d, 0.1).design;
+  assert.ok(tiny.boxes.every((b) => b.w >= 1 && b.d >= 1 && b.wallH >= 1));
+  const one = scaleDesign(d, 2, { only: d.boxes[0].id }).design;
+  assert.equal(one.boxes[0].w, d.boxes[0].w * 2);
+  assert.deepEqual(one.boxes[1], d.boxes[1]);
 });

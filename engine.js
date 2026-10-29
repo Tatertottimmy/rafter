@@ -270,6 +270,82 @@ function validateEdits(list, rel) {
 
 /** Unused id like "b3" (smallest free counter for the prefix). */
 /**
+ * The design scaled by `factor` (0.1-8): every object's edges move away from (or toward) an
+ * anchor, so shared walls stay shared, gaps grow in proportion and everything keeps its place
+ * relative to the rest. The anchor is the centre of the footprint at the lowest base, so the
+ * build grows where it stands. Roof pitch stays, so roofs grow with their footprints; lengths
+ * (overhang, chop, upturn, windows, doors) scale. Hand-placed blocks become blocks of blocks.
+ * `only` (an object id) scales just that object, about its own centre. Returns
+ * { design, dropped } (dropped: hand edits over the limit that had to be left out).
+ */
+export function scaleDesign(input, factor, { only = null } = {}) {
+  const d = JSON.parse(JSON.stringify(input));
+  const k = Math.min(8, Math.max(0.1, +factor || 1));
+  const pick = (o) => !only || o.id === only;
+  const boxes = d.boxes || [], pillars = d.pillars || [], segments = d.segments || [], fills = d.fills || [];
+  // Anchor: centre of the footprint of what is being scaled, at its lowest base.
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, y0 = Infinity;
+  const extend = (ax0, az0, ax1, az1, ay0) => { x0 = Math.min(x0, ax0); z0 = Math.min(z0, az0); x1 = Math.max(x1, ax1); z1 = Math.max(z1, az1); y0 = Math.min(y0, ay0); };
+  for (const b of boxes) if (pick(b)) extend(b.x, b.z, b.x + b.w, b.z + b.d, b.baseY);
+  for (const p of pillars) if (pick(p)) extend(p.x, p.z, p.x + (p.size || 1), p.z + (p.size || 1), p.baseY);
+  for (const g of segments) if (pick(g)) extend(Math.min(g.x0, g.x1), Math.min(g.z0, g.z1), Math.max(g.x0, g.x1) + 1, Math.max(g.z0, g.z1) + 1, g.baseY);
+  for (const f of fills) if (pick(f)) extend(f.x, f.z, f.x + f.w, f.z + f.d, f.baseY);
+  if (!only) for (const e of d.edits || []) extend(e.x, e.z, e.x + 1, e.z + 1, e.y);
+  if (x0 === Infinity) return { design: d, dropped: 0 };
+  const ax = Math.round((x0 + x1) / 2), az = Math.round((z0 + z1) / 2), ay = y0;
+  const S = (v, a) => Math.round(a + (v - a) * k);
+  // [lo, hi) -> scaled [lo, hi), at least one block
+  const span = (lo, hi, a) => { const n0 = S(lo, a); return [n0, Math.max(n0 + 1, S(hi, a))]; };
+  const len = (v, min = 0) => (v > 0 ? Math.max(Math.max(min, 1), Math.round(v * k)) : Math.max(min, 0));
+  // One cell -> the cells it covers once scaled.
+  const cells = (c, a) => { const [lo, hi] = span(c, c + 1, a); const out = []; for (let v = lo; v < hi; v++) out.push(v); return out; };
+  let dropped = 0;
+  const scaleEdits = (list, ox, oy, oz, nx, ny, nz) => {
+    const out = [];
+    for (const e of list || []) {
+      for (const X of cells(e.x + ox, ax)) for (const Y of cells(e.y + oy, ay)) for (const Z of cells(e.z + oz, az)) out.push({ ...e, x: X - nx, y: Y - ny, z: Z - nz });
+    }
+    if (out.length > EDITS_MAX) { dropped += out.length - EDITS_MAX; out.length = EDITS_MAX; }
+    return out;
+  };
+
+  for (const b of boxes) {
+    if (!pick(b)) continue;
+    const [bx0, bx1] = span(b.x, b.x + b.w, ax), [bz0, bz1] = span(b.z, b.z + b.d, az), [by0, by1] = span(b.baseY, b.baseY + b.wallH, ay);
+    b.edits = scaleEdits(b.edits, b.x, b.baseY, b.z, bx0, by0, bz0);
+    Object.assign(b, { x: bx0, z: bz0, w: bx1 - bx0, d: bz1 - bz0, baseY: by0, wallH: by1 - by0 });
+    const r = b.roof || {};
+    for (const [key, min] of [['overhang', 0], ['breakAt', 1], ['clip', 0], ['upturn', 0], ['upturnReach', 1], ['cut', 0]]) if (typeof r[key] === 'number') r[key] = len(r[key], min);
+    const det = b.details || {};
+    for (const [key, min] of [['winWidth', 1], ['winHeight', 1], ['winSill', 0], ['winGap', 0], ['doorWidth', 1], ['doorHeight', 1], ['studGap', 2]]) if (typeof det[key] === 'number') det[key] = len(det[key], min);
+  }
+  for (const p of pillars) {
+    if (!pick(p)) continue;
+    const n = p.size || 1;
+    const [px0, px1] = span(p.x, p.x + n, ax), [pz0] = span(p.z, p.z + n, az), [py0, py1] = span(p.baseY, p.baseY + Math.max(1, p.h), ay);
+    Object.assign(p, { x: px0, z: pz0, size: Math.min(5, px1 - px0), baseY: py0, h: py1 - py0 });
+  }
+  for (const g of segments) {
+    if (!pick(g)) continue;
+    // Lengthen along the line; it stays one block thick (on the scaled middle of its row).
+    const fx = g.x0 <= g.x1, fz = g.z0 <= g.z1;
+    const [sx0, sx1] = span(Math.min(g.x0, g.x1), Math.max(g.x0, g.x1) + 1, ax), [sz0, sz1] = span(Math.min(g.z0, g.z1), Math.max(g.z0, g.z1) + 1, az);
+    const alongX = g.z0 === g.z1, alongZ = g.x0 === g.x1 && !alongX;
+    const midX = Math.floor((sx0 + sx1 - 1) / 2), midZ = Math.floor((sz0 + sz1 - 1) / 2);
+    const [lx0, lx1] = alongZ ? [midX, midX] : [sx0, sx1 - 1], [lz0, lz1] = alongX ? [midZ, midZ] : [sz0, sz1 - 1];
+    const [gy0, gy1] = span(g.baseY, g.baseY + Math.max(1, g.h), ay);
+    Object.assign(g, { x0: fx ? lx0 : lx1, x1: fx ? lx1 : lx0, z0: fz ? lz0 : lz1, z1: fz ? lz1 : lz0, baseY: gy0, h: gy1 - gy0 });
+  }
+  for (const f of fills) {
+    if (!pick(f)) continue;
+    const [fx0, fx1] = span(f.x, f.x + f.w, ax), [fz0, fz1] = span(f.z, f.z + f.d, az), [fy0, fy1] = span(f.baseY, f.baseY + f.h, ay);
+    Object.assign(f, { x: fx0, z: fz0, w: fx1 - fx0, d: fz1 - fz0, baseY: fy0, h: fy1 - fy0 });
+  }
+  if (!only) d.edits = scaleEdits(d.edits, 0, 0, 0, 0, 0, 0);
+  return { design: d, dropped };
+}
+
+/**
  * Rotate an object `q` quarter-turns clockwise (seen from above) about the centre of its
  * footprint. Boxes swap w/d and turn their roof (axis, shed low side); segments turn their
  * endpoints. Returns a patch; odd-by-even footprints round the new corner down.

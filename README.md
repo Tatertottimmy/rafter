@@ -58,6 +58,11 @@ No build step is needed to develop: serve the folder with any static web server
 
 ## Using it
 
+- **Scale…** (Objects panel) makes the whole build, or just the selected object, bigger or
+  smaller by any factor (×½ to ×8). Edges scale about the build's centre at ground level, so
+  shared walls stay shared, gaps grow in proportion and roofs keep their pitch; overhangs,
+  chopped tops, windows and doors scale too, and hand-placed blocks become blocks of blocks.
+  Undo puts it back.
 - **Snap** (on by default, top of the 3D view): while you drag out an area or move an object it
   snaps to the centres, corners and edge middles of the other objects, with a ring marking the
   point. Ctrl+drag an area to draw it out from the centre, so a circle started on a roof's centre
