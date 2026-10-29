@@ -773,3 +773,24 @@ test('a box on another roof keeps that roof whole up to its walls; caps on chopp
   assert.equal(get(op, 4, top, 5), undefined, 'open middle');
   assert.ok([...op.blocks].some(([k, b]) => b.mat === 'stone_bricks'), 'rim kept');
 });
+
+test('towers from the ground and set-back storeys meet the roof below without a gap', () => {
+  const colOf = (g, x, z, src) => [...g.blocks].filter(([k, b]) => b.src === src && k.startsWith(x + ',') && k.endsWith(',' + z));
+  // a tall tower at the gable end of a house, both standing on the ground
+  const house = box({ w: 13, d: 9, wallH: 4, roof: { type: 'gable', axis: 'x', overhang: 1 } });
+  const tower = box({ id: 'b2', x: 8, z: 2, w: 5, d: 5, wallH: 10, wallMaterial: 'stone_bricks', roof: { type: 'hip', overhang: 1, material: 'dark_oak' } });
+  const g = buildGrid(design([house, tower]));
+  assert.ok(colOf(g, 7, 4, 'b1').length > 0, 'house roof runs under the tower eave');
+  for (let y = 0; y < 10; y++) assert.equal(get(g, 12, y, 4)?.src, 'b2', 'shared gable wall is the tower\'s at y=' + y);
+  assert.equal(colOf(g, 13, 4, 'b1').filter(([k]) => +k.split(',')[1] >= 0).length, 0, 'no house eave ledge across the tower face');
+  assert.equal(colOf(g, 10, 4, 'b1').length, 0, 'tower room is open');
+  // a smaller storey set in from the walls of a hip-roofed floor
+  const low = box({ w: 13, d: 13, wallH: 4, roof: { type: 'hip', overhang: 1 } });
+  const up = box({ id: 'b2', x: 3, z: 3, w: 7, d: 7, baseY: 4, wallH: 4, roof: { type: 'gable', overhang: 1, material: 'dark_oak' } });
+  const s = buildGrid(design([low, up]));
+  assert.ok(colOf(s, 2, 6, 'b1').some(([k]) => +k.split(',')[1] === 6), 'lower roof reaches the upper wall');
+  for (let y = 4; y < 8; y++) assert.equal(get(s, 3, y, 6)?.src, 'b2');
+  // a dormer on the wall line still merges (the sample house is unchanged)
+  const sample = buildGrid(defaultDesign());
+  assert.ok(sample.blocks.size > 300);
+});

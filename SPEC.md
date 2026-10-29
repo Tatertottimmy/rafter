@@ -318,7 +318,11 @@ Page contract (the artifact host wraps the file in its own doctype/head/body): w
   when a cap material is set.
 - **Roof tiers** (`box.stack` auto | stack | merge): steps 1–3 (and the soffit) run once per tier, each tier with its own
   height map and per-column `roofMin`. B is on a higher tier than A (tier = 1 + A's) when their footprints overlap and:
-  `stack` → B's eave > A's eave; `auto` → B.baseY > A.baseY and (B.baseY ≥ top − 1 or B's eave > top), top = A's highest
-  surface over the overlap; `merge` → never. Higher tiers overwrite lower ones on collision. Lower-tier roof blocks strictly
-  inside a stacked box's walls, at or above its base (above its floor when it has one), are removed. Step 5 and the seal pass
+  `stack` → B's eave > A's eave; `auto` → (B.baseY > A.baseY and B.baseY ≥ top − 1) or (B's eave > A's eave and B's eave
+  > wallTop, or ≥ wallTop when B's footprint is strictly inside A's), top = A's highest surface over the overlap, wallTop =
+  A's highest surface on B's perimeter columns inside A's region (a dormer on A's wall line, buried in the slope, merges);
+  `merge` → never. Higher tiers overwrite lower ones on collision. For a stacked box with walls, lower-tier roof blocks in
+  its footprint (walls included) at or above its base are removed, as are lower-tier eaves outside the lower box whose
+  nearest footprint cell lies in the stacked box (no ledge across a tower flush with a gable end); lower-tier walls stop
+  below a stacked box's base in its footprint. Step 5 and the seal pass
   then run once over everything; walls start under their own tier's roof.

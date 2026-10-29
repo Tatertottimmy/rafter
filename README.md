@@ -104,8 +104,9 @@ No build step is needed to develop: serve the folder with any static web server
   cracked bricks, nearby wood tones, ...) as patches, scatter, grime (heavier low down) or
   streaks. Mixes are picked automatically or chosen by hand; Reshuffle gives a new layout.
 - **Peaks and valleys** come from overlapping boxes; the higher roof wins at each column.
-- **Boxes on roofs**: a box that sits on another roof, or whose walls rise clear of it (a tower),
-  gets its own roof, and the roof below runs on unbroken right up to its walls. Dormers and wings
+- **Boxes on roofs**: a box that sits on another roof, or whose walls stand clear of it all round
+  (a tower, from the ground or from the roof, or a smaller storey set back on a lower floor), gets
+  its own roof, and the roof below runs on unbroken right up to its walls. Dormers and wings
   set into a roof still merge with it. "Meets roofs below" (Footprint) overrides this per box:
   Auto, Sits on top, or Merges into them.
 - **Walls** are generated under the roof per box (gable ends fill automatically) and stop where they

@@ -586,11 +586,20 @@ function roofTiers(design, regions) {
       if (B.stack === 'stack') stacks = EB > EA;
       else {
         // Auto: B sits on A's roof (its base within a block of the roof's top under it), or
-        // its walls rise clear of it (a tower). A dormer set into the slope, whose eave is
-        // no higher than the roof behind it, does neither and keeps merging.
-        let top = -Infinity;
+        // its walls stand clear of A's roof all the way round: a tower, from the ground or
+        // from the roof, or an upper storey set back on it. A dormer or cross wing whose back
+        // is buried in the slope does neither and keeps merging.
+        let top = -Infinity, wallTop = -Infinity;
         for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) top = Math.max(top, roundHalf(boxSurface(A, reg, x, z)));
-        stacks = B.baseY > A.baseY && (B.baseY >= top - 1 - EPS || EB > top + EPS);
+        for (let z = B.z; z < B.z + B.d; z++) for (let x = B.x; x < B.x + B.w; x++) {
+          if (x !== B.x && x !== B.x + B.w - 1 && z !== B.z && z !== B.z + B.d - 1) continue;
+          if (x < reg.x0 || x > reg.x1 || z < reg.z0 || z > reg.z1) continue;
+          wallTop = Math.max(wallTop, roundHalf(boxSurface(A, reg, x, z)));
+        }
+        // Walls whose top only just meets the slope count as clear for a storey set well in from
+        // A's walls, but not for a dormer standing on A's wall line.
+        const inside = B.x > A.x && B.z > A.z && B.x + B.w < A.x + A.w && B.z + B.d < A.z + A.d;
+        stacks = (B.baseY > A.baseY && B.baseY >= top - 1 - EPS) || (EB > EA && EB > wallTop - (inside ? 1 : 0) + EPS);
       }
       if (stacks) over.push([bi, ai]);
     }
@@ -952,19 +961,32 @@ export function buildGrid(input) {
   for (const [k, v] of surface) { const o = outSurface.get(k); if (!o || v.s >= o.s) outSurface.set(k, v); }
   } // tiers
 
-  // A stacked box's room is open: lower-tier roof inside its walls, at or above its base, goes.
+  // A stacked box stands on its own: lower-tier roof in its footprint (its room and the line
+  // of its walls), at or above its base, goes. Without walls it is open, and that roof stays.
   design.boxes.forEach((b, bi) => {
-    if (tierOf[bi] === tiers[0]) return;
-    for (let cz = b.z + 1; cz < b.z + b.d - 1; cz++) for (let cx = b.x + 1; cx < b.x + b.w - 1; cx++) {
+    if (tierOf[bi] === tiers[0] || !b.walls) return;
+    for (let cz = b.z; cz < b.z + b.d; cz++) for (let cx = b.x; cx < b.x + b.w; cx++) {
       for (let ti = 0; tiers[ti] < tierOf[bi]; ti++) {
         const low = roofMins[ti].get(colKey(cx, cz));
         if (low === undefined) continue;
-        for (let y = Math.max(low, b.baseY + (b.floor ? 1 : 0)); y <= low + 512; y++) {
+        for (let y = Math.max(low, b.baseY); y <= low + 512; y++) {
           const k = blockKey(cx, y, cz), blk = blocks.get(k);
           if (!blk) break;
           if (blk.role === 'roof' && tierOf[design.boxes.findIndex((o) => o.id === blk.src)] === tiers[ti]) blocks.delete(k);
         }
       }
+    }
+    // Eaves of a lower roof that hang off a wall this box now owns (a tower flush with a gable
+    // end) would stick out across its face as a ledge: they go too.
+    for (const [k, blk] of blocks) {
+      if (blk.role !== 'roof') continue;
+      const ai = design.boxes.findIndex((o) => o.id === blk.src);
+      if (ai < 0 || tierOf[ai] >= tierOf[bi]) continue;
+      const A = design.boxes[ai];
+      const [x, y, z] = parseKey(k);
+      if (y < b.baseY || (x >= A.x && x < A.x + A.w && z >= A.z && z < A.z + A.d)) continue;
+      const px = Math.min(Math.max(x, A.x), A.x + A.w - 1), pz = Math.min(Math.max(z, A.z), A.z + A.d - 1);
+      if (px >= b.x && px < b.x + b.w && pz >= b.z && pz < b.z + b.d) blocks.delete(k);
     }
   });
 
@@ -991,7 +1013,7 @@ export function buildGrid(input) {
       const low = srcBi < 0 ? undefined : roofMinOf(srcBi).get(colKey(nx, nz));
       if (low === undefined || low <= y) continue;
       // Only within one box: a tower next to a lower roof is open air there, not a gap.
-      if (blocks.get(blockKey(nx, low, nz)).src !== blk.src) continue;
+      if (blocks.get(blockKey(nx, low, nz))?.src !== blk.src) continue;
       sealed.push([nx, y, nz, blocks.get(blockKey(nx, low, nz)), low]);
     }
   }
@@ -1016,6 +1038,7 @@ export function buildGrid(input) {
   };
   for (const b of design.boxes) {
     if (!b.walls) continue;
+    const bi = design.boxes.indexOf(b);
     const E = b.baseY + b.wallH;
     const det = b.details;
     const x1 = b.x + b.w - 1, z1 = b.z + b.d - 1;
@@ -1030,12 +1053,13 @@ export function buildGrid(input) {
         const along = cz === b.z || cz === z1 ? 'x' : 'z';
         const side = along === 'x' ? (cz === b.z ? 'north' : 'south') : (cx === b.x ? 'west' : 'east');
         const i = along === 'x' ? cx - b.x : cz - b.z;
-        const lowest = roofMinOf(design.boxes.indexOf(b)).get(colKey(cx, cz));
+        const lowest = roofMinOf(bi).get(colKey(cx, cz));
         let start = (lowest === undefined ? E : lowest) - 1;
-        // A box stacked on this one (another floor) builds its own walls: stop below it.
-        for (const o of design.boxes) {
-          if (o !== b && o.walls && o.baseY > b.baseY && o.baseY <= start && cx >= o.x && cx < o.x + o.w && cz >= o.z && cz < o.z + o.d) start = o.baseY - 1;
-        }
+        // A box stacked on this one (another floor, or a tower on a higher roof tier) builds
+        // its own walls: stop below it.
+        design.boxes.forEach((o, oi) => {
+          if (o !== b && o.walls && (o.baseY > b.baseY || tierOf[oi] > tierOf[bi]) && o.baseY <= start && cx >= o.x && cx < o.x + o.w && cz >= o.z && cz < o.z + o.d) start = o.baseY - 1;
+        });
         for (let y = start; y >= b.baseY; y--) {
           if (has(cx, y, cz)) break; // STOP at anything already there (roof, other walls, ...)
           if (insideOtherRoom(b, cx, cz, y, false)) break; // STOP inside another box's room
