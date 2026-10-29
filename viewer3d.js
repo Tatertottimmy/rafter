@@ -438,6 +438,22 @@ export class Viewer {
     return null;
   }
 
+  /** Tint these world cells (show where a material is), or clear with null. One draw call. */
+  setHighlightCells(cells) {
+    if (this._hlCells) { this.scene.remove(this._hlCells); this._hlCells.geometry.dispose(); this._hlCells.material.dispose(); this._hlCells = null; }
+    if (cells && cells.length) {
+      const color = new THREE.Color(cssVar(this.container, '--accent', '#d9814a'));
+      const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1.06, 1.06, 1.06), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.45, depthTest: false, depthWrite: false }), cells.length);
+      const m4 = new THREE.Matrix4();
+      cells.forEach(([x, y, z], i) => { m4.makeTranslation(x + 0.5, y + 0.5, z + 0.5); mesh.setMatrixAt(i, m4); });
+      mesh.renderOrder = 25;
+      mesh.frustumCulled = false;
+      this._hlCells = mesh;
+      this.scene.add(mesh);
+    }
+    this.requestRender();
+  }
+
   /** Outline these world cells as the selected hand-placed blocks. */
   setSelectedBlocks(cells) {
     this._selCells = new Set((cells || []).map((c) => c.join(',')));

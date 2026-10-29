@@ -436,6 +436,34 @@
   .export-status.error { color: var(--danger); }
 
   /* ---------- popover (swatch picker) ---------- */
+  /* palette manager (floating window) */
+  .pal-win {
+    position: fixed; z-index: 40; top: 72px; right: 24px; width: min(440px, calc(100vw - 32px));
+    max-height: min(78vh, 680px); display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  }
+  .pal-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); cursor: move; user-select: none; }
+  .pal-head select { max-width: 150px; }
+  .pal-head #palSum { margin-left: auto; font-size: 11px; }
+  .pal-body { overflow: auto; padding: 6px 10px; display: flex; flex-direction: column; gap: 8px; }
+  .pal-row { padding: 6px 4px; border-bottom: 1px solid var(--line); border-radius: 4px; }
+  .pal-row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+  .pal-row.flash { background: color-mix(in srgb, var(--accent) 22%, transparent); transition: background 0.9s; }
+  .pal-main { display: flex; align-items: center; gap: 8px; }
+  .pal-name { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+  .pal-name span:first-child { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pal-name .muted, .pal-count .muted { font-size: 10px; }
+  .pal-count { display: flex; flex-direction: column; align-items: flex-end; font-size: 12px; }
+  .pal-acts { display: flex; gap: 4px; }
+  .pal-bar { height: 4px; margin: 5px 0; background: var(--line); border-radius: 2px; overflow: hidden; }
+  .pal-bar span { display: block; height: 100%; }
+  .pal-roles { display: flex; flex-wrap: wrap; gap: 4px; }
+  .pal-role { font: inherit; font-size: 11px; padding: 2px 7px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--fg); cursor: pointer; }
+  .pal-role:hover { border-color: var(--accent); }
+  .pal-role.warn { border-color: #c98a1a; }
+  .pal-foot { margin: 0; padding: 6px 10px 8px; font-size: 11px; border-top: 1px solid var(--line); }
+  .palette-open { cursor: pointer; border: 0; background: transparent; font: inherit; color: inherit; text-decoration: underline dotted; }
   .popover {
     position: fixed;
     z-index: 50;
@@ -751,6 +779,16 @@
   </main>
 
   <!-- Swatch picker popover -->
+  <div class="pal-win" id="palWin" role="dialog" aria-labelledby="palTitle" hidden>
+    <div class="pal-head" id="palHead">
+      <strong id="palTitle">Palette</strong>
+      <select id="palScope" aria-label="Which part of the design"></select>
+      <span class="muted mono" id="palSum"></span>
+      <button class="btn icon small" id="palClose" type="button" aria-label="Close palette" title="Close (Esc)">&times;</button>
+    </div>
+    <div class="pal-body" id="palBody"></div>
+    <p class="pal-foot muted">Hover a block to see where it is. Click a role to change it there only; Replace changes it everywhere, Swap trades two blocks.</p>
+  </div>
   <div class="popover" id="popover" role="dialog" aria-modal="false" aria-labelledby="popoverTitle" hidden>
     <div class="popover-head">
       <div class="popover-title-row">

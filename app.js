@@ -419,6 +419,7 @@ function select(id, opts = {}) {
   if (viewer && !opts.fromViewer) viewer.setSelection(id);
   renderObjectList();
   renderProps(!changed);
+  renderPaletteWin();
 }
 
 // ------------------------------------------------------------------ header
@@ -451,40 +452,224 @@ function renderPalette() {
   if (state.grid) for (const b of state.grid.blocks.values()) { const u = touch(b.mat, false, false); if (u) u.count++; }
 
   const entries = [...usage.entries()].filter(([k, u]) => u.count > 0 || u.core).sort((a, b) => b[1].count - a[1].count || famName(a[0]).localeCompare(famName(b[0])));
-  bar.replaceChildren(h('span', { class: 'palette-label' }, 'Palette'));
+  const open = h('button', { class: 'palette-label palette-open', type: 'button', 'aria-haspopup': 'dialog', 'aria-controls': 'palWin', title: 'Open the palette manager' }, 'Palette');
+  open.addEventListener('click', () => openPaletteWin());
+  bar.replaceChildren(open);
   for (const [key, u] of entries) {
     const chip = h('button', {
       class: 'chip', id: 'chip-' + key, type: 'button', 'aria-haspopup': 'dialog',
-      title: `Replace ${famName(key)} everywhere in the design`,
+      title: `${famName(key)}: change it in the palette manager`,
     }, iconEl(key, 22), h('span', { text: famName(key) }), h('span', { class: 'count', text: fmt(u.count) }));
-    chip.addEventListener('click', () => openPicker(chip, {
-      title: `Replace ${famName(key)} everywhere`,
-      keys: fullFamilies(),
-      current: key,
-      hint: u.roof ? ROOF_HINT : null,
-      onPick: (to) => swapFamily(key, to),
-    }));
+    chip.addEventListener('click', () => openPaletteWin(key));
     bar.append(chip);
   }
+  renderPaletteWin();
+}
+
+// ------------------------------------------------------------------ palette manager
+// Every place a material is used, as roles ("Roof", "Trim & ridge", "Wall mix", ...), each with
+// setters, so a material can be replaced everywhere, in one role only, or in one object only.
+// Roles that make roof shapes (stairs and slabs) are marked, so a block without them is flagged.
+function paletteUses(scopeId = null) {
+  const uses = new Map(); // mat -> { count, roles: Map(label -> { shape, items: [{ id, set }] }) }
+  const entry = (mat) => {
+    let u = uses.get(mat);
+    if (!u) { u = { count: 0, roles: new Map() }; uses.set(mat, u); }
+    return u;
+  };
+  const add = (mat, label, shape, id, set) => {
+    if (!mat || !FAMILIES[mat]) return;
+    const u = entry(mat);
+    let r = u.roles.get(label);
+    if (!r) { r = { shape, items: [] }; u.roles.set(label, r); }
+    r.items.push({ id, set });
+  };
+  const inScope = (o) => !scopeId || o.id === scopeId;
+  const d = state.design;
+  const editSet = (e) => (to) => {
+    e.mat = to;
+    // Keep the edit buildable: a shape the new block doesn't have becomes a full block.
+    const f = FAMILIES[to];
+    if ((e.shape === 'stair' && !f.stairs) || (e.shape === 'slab' && !f.slab) || (e.shape === 'pane' && !f.pane)) { e.shape = 'full'; delete e.half; delete e.facing; delete e.axis; }
+  };
+  for (const b of d.boxes) {
+    if (!inScope(b)) continue;
+    const det = b.details || {}, r = b.roof, va = b.variation || {};
+    add(r.material, 'Roof', 'stairs', b.id, (t) => { r.material = t; });
+    add(b.wallMaterial, 'Walls', null, b.id, (t) => { b.wallMaterial = t; });
+    if (det.trim || det.ridge) add(det.trimMat, 'Trim & ridge', 'stairs', b.id, (t) => { det.trimMat = t; });
+    if (det.corners) add(det.cornerMat, 'Corners', null, b.id, (t) => { det.cornerMat = t; });
+    if (det.base) add(det.baseMat, 'Base course', null, b.id, (t) => { det.baseMat = t; });
+    if (det.beams || det.studs) add(det.beamMat, 'Beams & studs', null, b.id, (t) => { det.beamMat = t; });
+    if (det.windows) add(det.windowMat, 'Windows', det.winStyle === 'pane' ? 'pane' : null, b.id, (t) => { det.windowMat = t; });
+    if (det.frame && (det.windows || det.door)) add(det.frameMat, 'Frames', null, b.id, (t) => { det.frameMat = t; });
+    if (det.sills && det.windows) add(det.sillMat, 'Sills', 'stairs', b.id, (t) => { det.sillMat = t; });
+    if (r.cut > 0 && r.capMat) add(r.capMat, 'Roof cap', null, b.id, (t) => { r.capMat = t; });
+    for (const surface of ['wall', 'roof']) {
+      if (!va[surface]) continue;
+      const keys = MIX_KEYS[surface].slice(0, va[surface + 'MixCount'] || 2);
+      const label = surface === 'wall' ? 'Wall mix' : 'Roof mix';
+      keys.forEach((key, i) => {
+        const chosen = va[key] && FAMILIES[va[key]] ? va[key] : null;
+        const mat = chosen || autoMix(surface, surface === 'wall' ? ['wallMaterial'] : ['roof', 'material'], i)(b);
+        add(mat, chosen ? label : label + ' (auto)', surface === 'roof' ? 'stairs' : null, b.id, (t) => { va[key] = t; });
+      });
+    }
+    for (const e of b.edits || []) if (e.mat) add(e.mat, 'Hand-placed', null, b.id, editSet(e));
+  }
+  for (const p of d.pillars) {
+    if (!inScope(p)) continue;
+    add(p.material, 'Pillars', p.shape === 'wall' ? 'wall' : null, p.id, (t) => { p.material = t; });
+    if (p.base && p.base !== 'none') add(p.baseMat, 'Pillar bases', p.base === 'block' ? null : p.base === 'slab' ? 'slab' : 'stairs', p.id, (t) => { p.baseMat = t; });
+    if (p.cap && p.cap !== 'none') add(p.capMat, 'Pillar caps', p.cap === 'block' ? null : p.cap === 'slab' ? 'slab' : 'stairs', p.id, (t) => { p.capMat = t; });
+  }
+  for (const g of d.segments) if (inScope(g)) add(g.material, 'Wall segments', null, g.id, (t) => { g.material = t; });
+  for (const f of d.fills) if (inScope(f)) add(f.material, 'Fills', f.shape === 'stair' ? 'stairs' : f.shape === 'slab' ? 'slab' : f.shape === 'pane' ? 'pane' : null, f.id, (t) => { f.material = t; });
+  if (!scopeId) for (const e of d.edits || []) if (e.mat) add(e.mat, 'Hand-placed', null, null, editSet(e));
+  if (state.grid) for (const blk of state.grid.blocks.values()) {
+    if (scopeId && blk.src !== scopeId) continue;
+    if (blk.mat && FAMILIES[blk.mat]) entry(blk.mat).count++;
+  }
+  return uses;
+}
+/** Why a material falls short in a role ("no stairs: stepped roof"), or ''. */
+function shapeWarning(mat, shape) {
+  const f = FAMILIES[mat];
+  if (!f || !shape) return '';
+  if (shape === 'stairs' && !f.stairs) return 'no stairs: builds as a stepped roof of full blocks';
+  if (shape === 'slab' && !f.slab) return 'no slabs: uses full blocks';
+  if (shape === 'pane' && !f.pane) return 'no pane: windows become full blocks';
+  if (shape === 'wall' && !f.wall) return 'no wall block: uses full blocks';
+  return '';
+}
+
+/** Replace `from` with `to` in every use (or only `role`), within the palette window's scope. */
+function paletteReplace(from, to, role = null) {
+  if (!to || from === to) return;
+  const u = paletteUses(palWin.scope).get(from);
+  if (!u) return;
+  beginChange(null);
+  let n = 0;
+  for (const [label, r] of u.roles) if (!role || label === role) for (const it of r.items) { it.set(to); n++; }
+  afterChange();
+  renderProps(true);
+  const where = role ? ` in ${role.toLowerCase()}` : '';
+  toast(`${famName(from)} → ${famName(to)}${where} (${n} ${n === 1 ? 'place' : 'places'})`, false, { label: 'Undo', run: undo });
+}
+/** Swap two materials both ways, within the window's scope. */
+function paletteSwap(a, b) {
+  if (!b || a === b) return;
+  const uses = paletteUses(palWin.scope);
+  const ia = [...(uses.get(a)?.roles.values() || [])].flatMap((r) => r.items);
+  const ib = [...(uses.get(b)?.roles.values() || [])].flatMap((r) => r.items);
+  beginChange(null);
+  for (const it of ia) it.set(b);
+  for (const it of ib) it.set(a);
+  afterChange();
+  renderProps(true);
+  toast(`Swapped ${famName(a)} ⇄ ${famName(b)}`, false, { label: 'Undo', run: undo });
+}
+
+const palWin = { open: false, scope: null, x: null, y: null, focus: null };
+function openPaletteWin(focusKey = null) {
+  palWin.open = true;
+  palWin.focus = focusKey;
+  $('palWin').hidden = false;
+  renderPaletteWin();
+  if (focusKey) {
+    const row = $('pal-' + focusKey);
+    if (row) { row.scrollIntoView({ block: 'nearest' }); row.classList.add('flash'); setTimeout(() => row.classList.remove('flash'), 900); }
+  }
+}
+function closePaletteWin() {
+  palWin.open = false;
+  $('palWin').hidden = true;
+  if (viewer) viewer.setHighlightCells(null);
+}
+function renderPaletteWin() {
+  const win = $('palWin');
+  if (!win || !palWin.open) return;
+  // Scope: whole design, or the selected object.
+  if (palWin.scope && !findObject(palWin.scope)) palWin.scope = null;
+  const sel = state.selectedId && findObject(state.selectedId);
+  const scopeSel = $('palScope');
+  scopeSel.replaceChildren(h('option', { value: '', text: 'Whole design' }), ...(sel || palWin.scope ? [h('option', { value: (palWin.scope || state.selectedId), text: 'Only ' + objectLabel(findObject(palWin.scope || state.selectedId)) })] : []));
+  scopeSel.value = palWin.scope || '';
+  const uses = paletteUses(palWin.scope);
+  const rows = [...uses.entries()].filter(([, u]) => u.count > 0 || u.roles.size).sort((a, b) => b[1].count - a[1].count || famName(a[0]).localeCompare(famName(b[0])));
+  const total = rows.reduce((t, [, u]) => t + u.count, 0) || 1;
+  $('palSum').textContent = `${rows.length} ${rows.length === 1 ? 'block' : 'blocks'} · ${fmt(total)} placed`;
+  const body = $('palBody');
+  const scrollTop = body.scrollTop;
+  body.replaceChildren();
+  if (!rows.length) body.append(h('p', { class: 'empty', text: 'Nothing here yet.' }));
+  for (const [mat, u] of rows) {
+    const pct = Math.round((u.count / total) * 1000) / 10;
+    const roleChips = [...u.roles.entries()].map(([label, r]) => {
+      const warn = shapeWarning(mat, r.shape);
+      const objs = new Set(r.items.map((it) => it.id)).size;
+      const chip = h('button', { class: 'pal-role' + (warn ? ' warn' : ''), type: 'button', title: (warn ? famName(mat) + ' has ' + warn + '. ' : '') + `Change ${famName(mat)} in ${label.toLowerCase()} only` },
+        (warn ? '⚠ ' : '') + label + (objs > 1 ? ' ·' + objs : ''));
+      chip.addEventListener('click', () => openPicker(chip, {
+        title: `${famName(mat)} in ${label.toLowerCase()} →`, keys: fullFamilies(), current: mat, hint: r.shape === 'stairs' ? ROOF_HINT : null,
+        onPick: (to) => paletteReplace(mat, to, label),
+      }));
+      return chip;
+    });
+    const replace = h('button', { class: 'btn small', type: 'button', title: `Replace ${famName(mat)} everywhere it is used${palWin.scope ? ' in this object' : ''}` }, 'Replace…');
+    replace.addEventListener('click', () => openPicker(replace, {
+      title: `Replace ${famName(mat)} everywhere`, keys: fullFamilies(), current: mat,
+      hint: [...u.roles.values()].some((r) => r.shape === 'stairs') ? ROOF_HINT : null,
+      onPick: (to) => paletteReplace(mat, to),
+    }));
+    const swap = h('button', { class: 'btn small', type: 'button', title: `Swap ${famName(mat)} with another block both ways` }, 'Swap ⇄');
+    swap.addEventListener('click', () => openPicker(swap, {
+      title: `Swap ${famName(mat)} with…`, keys: rows.map(([k]) => k).filter((k) => k !== mat).concat(fullFamilies().filter((k) => !uses.has(k))), current: null,
+      onPick: (to) => paletteSwap(mat, to),
+    }));
+    const row = h('div', { class: 'pal-row', id: 'pal-' + mat },
+      h('div', { class: 'pal-main' },
+        iconEl(mat, 28),
+        h('div', { class: 'pal-name' }, h('span', { text: famName(mat) }), h('span', { class: 'muted mono', text: FAMILIES[mat].group || '' })),
+        h('div', { class: 'pal-count mono' }, h('span', { text: fmt(u.count) }), h('span', { class: 'muted', text: pct + '%' })),
+        h('div', { class: 'pal-acts' }, replace, swap)),
+      h('div', { class: 'pal-bar' }, h('span', { style: `width:${Math.max(1, pct)}%;background:${FAMILIES[mat].color}` })),
+      h('div', { class: 'pal-roles' }, ...(roleChips.length ? roleChips : [h('span', { class: 'muted', text: 'Placed by the build itself' })])));
+    // Hover: show where it is in the 3D view.
+    row.addEventListener('pointerenter', () => {
+      if (!viewer || !state.grid) return;
+      const cells = [];
+      for (const blk of state.grid.blocks.values()) if (blk.mat === mat && (!palWin.scope || blk.src === palWin.scope)) cells.push([blk.x, blk.y, blk.z]);
+      viewer.setHighlightCells(cells);
+    });
+    row.addEventListener('pointerleave', () => viewer && viewer.setHighlightCells(null));
+    body.append(row);
+  }
+  body.scrollTop = scrollTop;
+}
+function wirePaletteWin() {
+  const win = $('palWin');
+  $('palClose').addEventListener('click', closePaletteWin);
+  $('palScope').addEventListener('change', (e) => { palWin.scope = e.target.value || null; renderPaletteWin(); });
+  win.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('popover').hidden) closePaletteWin(); });
+  // Drag the window by its title bar; it stays inside the page.
+  const head = $('palHead');
+  head.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button, select')) return;
+    const r = win.getBoundingClientRect(), ox = e.clientX - r.left, oy = e.clientY - r.top;
+    head.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      const x = Math.min(Math.max(0, ev.clientX - ox), innerWidth - r.width), y = Math.min(Math.max(0, ev.clientY - oy), innerHeight - 40);
+      win.style.left = x + 'px'; win.style.top = y + 'px'; win.style.right = 'auto';
+    };
+    const up = () => { head.removeEventListener('pointermove', move); head.removeEventListener('pointerup', up); };
+    head.addEventListener('pointermove', move);
+    head.addEventListener('pointerup', up);
+  });
 }
 // [detail flag(s), material key]: a material only counts as "used" while its detail is on.
 const DETAIL_MATS = [[['trim', 'ridge'], 'trimMat'], [['corners'], 'cornerMat'], [['base'], 'baseMat'], [['beams'], 'beamMat'], [['windows'], 'windowMat']];
 const flagOn = (b, flags) => !!b.details && flags.some((k) => b.details[k]);
-function swapFamily(from, to) {
-  if (from === to) return;
-  beginChange(null);
-  for (const b of state.design.boxes) {
-    if (b.roof.material === from) b.roof.material = to;
-    if (b.wallMaterial === from) b.wallMaterial = to;
-    for (const [flag, mk] of DETAIL_MATS) if (flagOn(b, flag) && b.details[mk] === from) b.details[mk] = to;
-  }
-  for (const p of state.design.pillars) if (p.material === from) p.material = to;
-  for (const s of state.design.segments) if (s.material === from) s.material = to;
-  for (const f of state.design.fills) if (f.material === from) f.material = to;
-  afterChange();
-  renderProps(true);
-  toast(`${famName(from)} → ${famName(to)}`);
-}
 
 // ------------------------------------------------------------------ object list
 function renderObjectList() {
@@ -2132,6 +2317,7 @@ function wire() {
   $('btnAddPillar').addEventListener('click', addPillar);
   $('btnAddSegment').addEventListener('click', addSegment);
   $('btnAutoDetails').addEventListener('click', () => autoDetails(null));
+  wirePaletteWin();
   // Scale: the whole build, or the selected object, by a factor.
   const scaleEst = () => {
     const k = +$('scaleFactor').value || 1;

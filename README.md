@@ -128,7 +128,13 @@ No build step is needed to develop: serve the folder with any static web server
   would enter another box's room or hit another roof. Add free-standing wall segments and pillars
   from the Objects panel.
 - **Palette**: every material is chosen from a swatch grid. The palette bar in the header lists the
-  families in use; click a chip to swap that material everywhere.
+  blocks in use; click "Palette" or a chip to open the palette manager, a window you can drag
+  around. It lists every block with its count and share, and every role it plays (roof, walls,
+  trim, corners, beams, base, windows, frames, sills, roof cap, texture mixes, pillars, segments,
+  fills, hand-placed blocks). Click a role to change the block there only, Replace to change it
+  everywhere, or Swap to trade two blocks. Scope it to the selected object, hover a row to see
+  where that block is in 3D, and blocks missing a shape a role needs (no stairs for a roof) are
+  flagged.
 - **Layer plans**: step through Y layers; arrows point uphill on stairs, hatch marks slabs. The 3D
   view slices to the same layer so you can build along.
 - **Export**: `.litematic` for Litematica (put it in `.minecraft/schematics`) or `.schem` for
