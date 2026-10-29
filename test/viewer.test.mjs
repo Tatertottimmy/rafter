@@ -217,6 +217,23 @@ test('roofHeightEstimate and lowerBound', () => {
   assert.equal(V.lowerBound(ys, -1), 0);
 });
 
+test('blockBoxes turns shapes the way they face; rayBox finds the entry face', () => {
+  const stair = (facing) => ({ kind: 'stair', mat: 'spruce', props: { facing, half: 'bottom', shape: 'straight' } });
+  // a stair's tall half is on the side it faces
+  assert.deepEqual(V.blockBoxes(stair('north'))[1], [0, 0.5, 0, 1, 1, 0.5]);
+  assert.deepEqual(V.blockBoxes(stair('east'))[1], [0.5, 0.5, 0, 1, 1, 1]);
+  assert.deepEqual(V.blockBoxes(stair('south'))[1], [0, 0.5, 0.5, 1, 1, 1]);
+  assert.deepEqual(V.blockBoxes(stair('west'))[1], [0, 0.5, 0, 0.5, 1, 1]);
+  assert.deepEqual(V.blockBoxes({ kind: 'slab', mat: 'spruce', props: { type: 'top' } }), [[0, 0.5, 0, 1, 1, 1]]);
+  assert.ok(V.isOpaqueCube({ kind: 'full', mat: 'spruce', props: {} }));
+  assert.ok(!V.isOpaqueCube({ kind: 'stair', mat: 'spruce', props: {} }));
+  // looking straight down onto a unit box from above enters through its top
+  const h = V.rayBox([0.5, 5, 0.5], [0, -1, 0], [0, 0, 0, 1, 1, 1]);
+  assert.deepEqual(h, { t: 4, axis: 1, sign: 1 });
+  assert.equal(V.rayBox([5, 5, 5], [0, -1, 0], [0, 0, 0, 1, 1, 1]), null);
+  assert.equal(V.rayBox([0.5, 0.5, 0.5], [0, -1, 0], [0, 0, 0, 1, 1, 1]), null, 'starting inside');
+});
+
 if (haveBlocks) {
   test('blocks.js: every family pattern is a known pattern name', async () => {
     const { FAMILIES } = await import('../blocks.js');

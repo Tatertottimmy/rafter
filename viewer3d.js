@@ -1,5 +1,5 @@
 // viewer3d.js — Three.js renderer + mouse interaction for Rafter.
-// Instanced meshes per (geometry kind × family), pick proxies, outlines,
+// One face-culled mesh per block family, pick proxies, outlines,
 // resize handles, move/resize drags, layer slicing.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -185,6 +185,135 @@ export function buildGeometries() {
 }
 
 // ---------------------------------------------------------------------------
+// Face meshing: one merged mesh per material holding only the faces that can be seen
+// ---------------------------------------------------------------------------
+
+const KIND_BOXES = (() => {
+  const m = { full: [[0, 0, 0, 1, 1, 1]], slab_bottom: [[0, 0, 0, 1, 0.5, 1]], slab_top: [[0, 0.5, 0, 1, 1, 1]], ...WALL_BOXES };
+  for (const s of STAIR_SHAPES) for (const h of STAIR_HALVES) m[`stair_${s}_${h}`] = stairBoxes(s, h);
+  return m;
+})();
+
+/** The boxes of a block in its cell ([0,1] coords), turned the way it faces. */
+export function blockBoxes(block) {
+  const out = [];
+  for (const { kind, angle } of classifyBlock(block)) {
+    const c = Math.round(Math.cos(angle)), s = Math.round(Math.sin(angle));
+    for (const [x0, y0, z0, x1, y1, z1] of KIND_BOXES[kind] || KIND_BOXES.full) {
+      // Same turn as the instance matrix (makeRotationY) about the cell centre.
+      const xa = c * (x0 - 0.5) + s * (z0 - 0.5) + 0.5, xb = c * (x1 - 0.5) + s * (z1 - 0.5) + 0.5;
+      const za = -s * (x0 - 0.5) + c * (z0 - 0.5) + 0.5, zb = -s * (x1 - 0.5) + c * (z1 - 0.5) + 0.5;
+      out.push([Math.min(xa, xb), y0, Math.min(za, zb), Math.max(xa, xb), y1, Math.max(za, zb)]);
+    }
+  }
+  return out;
+}
+
+/** A whole, opaque cube: the faces of anything touching it are hidden. */
+export function isOpaqueCube(b) {
+  return !!b && (b.kind === 'full' || (b.kind === 'slab' && b.props && b.props.type === 'double')) && !(FAMILIES[b.mat] && FAMILIES[b.mat].transparent);
+}
+
+// The six faces: normal axis, sign, the two in-face axes (cyclic, so corners wind outward).
+const FACES = [[0, 1, 1, 2], [0, -1, 1, 2], [1, 1, 2, 0], [1, -1, 2, 0], [2, 1, 0, 1], [2, -1, 0, 1]];
+// Per face: its 4 corners as box-coordinate indices (0-2 = min x,y,z, 3-5 = max) and UVs from uvForVertex.
+const FACE_CORNERS = FACES.map(([a, sign, u, v]) => {
+  const order = sign > 0 ? [[0, 0], [1, 0], [1, 1], [0, 1]] : [[0, 0], [0, 1], [1, 1], [1, 0]];
+  return order.map(([cu, cv]) => {
+    const pick = [0, 1, 2];
+    pick[a] = sign > 0 ? a + 3 : a;
+    pick[u] = cu ? u + 3 : u;
+    pick[v] = cv ? v + 3 : v;
+    return pick;
+  });
+});
+const FACE_CORNERS_FLAT = FACE_CORNERS.map((cs) => Int8Array.from(cs.flat()));
+const FACE_NX = FACES.map(([a, sign]) => (a === 0 ? sign * 127 : 0));
+const FACE_NY = FACES.map(([a, sign]) => (a === 1 ? sign * 127 : 0));
+const FACE_NZ = FACES.map(([a, sign]) => (a === 2 ? sign * 127 : 0));
+
+/** Growable typed arrays for one material's mesh. */
+class FaceBuf {
+  constructor(quads = 1024) { const v = Math.max(64, quads * 4); this.pos = new Float32Array(v * 3); this.nor = new Int8Array(v * 3); this.uv = new Float32Array(v * 2); this.n = 0; }
+  _grow() {
+    const g = (a) => { const b = new a.constructor(a.length * 2); b.set(a); return b; };
+    this.pos = g(this.pos); this.nor = g(this.nor); this.uv = g(this.uv);
+  }
+  /** One quad of box `bx` (cell-local) in cell (X, Y, Z), face index f. */
+  quad(X, Y, Z, bx, f) {
+    if ((this.n + 4) * 3 > this.pos.length) this._grow();
+    const pos = this.pos, nor = this.nor, uv = this.uv, cs = FACE_CORNERS_FLAT[f];
+    const nx = FACE_NX[f], ny = FACE_NY[f], nz = FACE_NZ[f];
+    let i = this.n;
+    for (let c = 0; c < 12; c += 3, i++) {
+      const px = bx[cs[c]], py = bx[cs[c + 1]], pz = bx[cs[c + 2]];
+      const i3 = i * 3, i2 = i * 2;
+      pos[i3] = X + px; pos[i3 + 1] = Y + py; pos[i3 + 2] = Z + pz;
+      nor[i3] = nx; nor[i3 + 1] = ny; nor[i3 + 2] = nz;
+      // = uvForVertex(n, p)
+      if (ny) { uv[i2] = px; uv[i2 + 1] = 1 - pz; }
+      else if (nx) { uv[i2] = nx > 0 ? 1 - pz : pz; uv[i2 + 1] = py; }
+      else { uv[i2] = nz > 0 ? px : 1 - px; uv[i2 + 1] = py; }
+    }
+    this.n = i;
+  }
+  /** The finished geometry (indexed quads). Its bounding sphere comes from the grid bounds. */
+  geometry(grid) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(this.pos.subarray(0, this.n * 3), 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(this.nor.subarray(0, this.n * 3), 3, true));
+    g.setAttribute('uv', new THREE.BufferAttribute(this.uv.subarray(0, this.n * 2), 2));
+    const quads = this.n / 4;
+    const idx = quads * 4 > 65535 ? new Uint32Array(quads * 6) : new Uint16Array(quads * 6);
+    for (let q = 0, k = 0; q < quads; q++) { const b = q * 4; idx[k++] = b; idx[k++] = b + 1; idx[k++] = b + 2; idx[k++] = b; idx[k++] = b + 2; idx[k++] = b + 3; }
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    const { min, max } = grid;
+    const c = new THREE.Vector3((min.x + max.x + 1) / 2, (min.y + max.y + 1) / 2, (min.z + max.z + 1) / 2);
+    g.boundingSphere = new THREE.Sphere(c, c.distanceTo(new THREE.Vector3(min.x, min.y, min.z)) + 1);
+    return g;
+  }
+}
+
+const FULL_BOXES = [[0, 0, 0, 1, 1, 1]];
+const shapeCache = new Map();
+/** blockBoxes, cached per shape (the boxes are shared: never modify them). */
+export function shapeBoxes(b) {
+  if (b.kind === 'full') return FULL_BOXES;
+  const p = b.props || {};
+  const k = b.kind + '|' + p.type + '|' + p.facing + '|' + p.half + '|' + p.shape + '|' + p.up + '|' + p.north + '|' + p.east + '|' + p.south + '|' + p.west;
+  let boxes = shapeCache.get(k);
+  if (!boxes) { boxes = blockBoxes(b); shapeCache.set(k, boxes); }
+  return boxes;
+}
+
+/** A second geometry over the same buffers (its own draw range). */
+function shareGeometry(g) {
+  const h = new THREE.BufferGeometry();
+  for (const k of Object.keys(g.attributes)) h.setAttribute(k, g.attributes[k]);
+  h.setIndex(g.index);
+  h.boundingSphere = g.boundingSphere;
+  return h;
+}
+
+/**
+ * Ray against a box [x0,y0,z0,x1,y1,z1] in world coords: {t, axis, sign} of the entry face,
+ * or null. Rays starting inside the box don't hit it.
+ */
+export function rayBox(o, d, b) {
+  let tn = -Infinity, tf = Infinity, axis = -1;
+  for (let a = 0; a < 3; a++) {
+    if (Math.abs(d[a]) < 1e-12) { if (o[a] < b[a] || o[a] > b[a + 3]) return null; continue; }
+    let t0 = (b[a] - o[a]) / d[a], t1 = (b[a + 3] - o[a]) / d[a];
+    if (t0 > t1) { const t = t0; t0 = t1; t1 = t; }
+    if (t0 > tn) { tn = t0; axis = a; }
+    if (t1 < tf) tf = t1;
+    if (tn > tf) return null;
+  }
+  if (axis < 0 || tn < 0) return null;
+  return { t: tn, axis, sign: d[axis] > 0 ? -1 : 1 };
+}
+
+// ---------------------------------------------------------------------------
 // Viewer
 // ---------------------------------------------------------------------------
 
@@ -336,55 +465,102 @@ export class Viewer {
     this._applyBackground();
     this._disposeInstanced();
 
-    // Pass 1: bucket instances per (kind|family).
-    const buckets = new Map(); // key -> {kind, mat, color, items: [x,y,z,angle,...]}
-    if (grid && grid.blocks) {
-      for (const [key, block] of grid.blocks) {
-        let x, y, z;
-        if (block.x !== undefined && block.y !== undefined && block.z !== undefined) { x = block.x; y = block.y; z = block.z; }
-        else { const p = key.split(','); x = +p[0]; y = +p[1]; z = +p[2]; }
-        const mat = block.mat || 'unknown';
-        for (const { kind, angle } of classifyBlock(block)) {
-          const bk = kind + '|' + mat;
-          let b = buckets.get(bk);
-          if (!b) { b = { kind, mat, color: block.color || '#888888', items: [] }; buckets.set(bk, b); }
-          b.items.push(x, y, z, angle);
+    const blocks = grid && grid.blocks ? grid.blocks : new Map();
+    const cellOf = (key, b) => (b.x !== undefined ? [b.x, b.y, b.z] : key.split(',').map(Number));
+    const seeThrough = (b) => !!(FAMILIES[b.mat] && FAMILIES[b.mat].transparent);
+    // Each cell holds a shape id: 0 air, 1 opaque cube, then one id per other (shape, see-through)
+    // seen. A Uint16 grid over the bounds (one cell of margin) is far faster than string keys; a
+    // design too big for one looks its neighbours up in the map instead.
+    const shapes = [null, FULL_BOXES], shapeSee = [false, false], shapeIds = new Map();
+    const sidOf = (b) => {
+      if (!b) return 0;
+      const see = seeThrough(b);
+      if (!see && isOpaqueCube(b)) return 1;
+      const boxes = shapeBoxes(b);
+      const k = see ? 't' : 'o';
+      let m = shapeIds.get(k);
+      if (!m) { m = new Map(); shapeIds.set(k, m); }
+      let id = m.get(boxes);
+      if (id === undefined) { id = shapes.length; shapes.push(boxes); shapeSee.push(see); m.set(boxes, id); }
+      return id;
+    };
+    const { min: lo = { x: 0, y: 0, z: 0 }, max: hi = { x: 0, y: 0, z: 0 } } = grid || {};
+    const sy = hi.y - lo.y + 3, sz = hi.z - lo.z + 3, vol = (hi.x - lo.x + 3) * sy * sz;
+    const occ = blocks.size && vol <= 1 << 27 ? new Uint16Array(vol) : null;
+    const at = (x, y, z) => ((x - lo.x + 1) * sy + (y - lo.y + 1)) * sz + (z - lo.z + 1);
+    const STEP = [sy * sz, -sy * sz, sz, -sz, 1, -1]; // index offset to the neighbour across face f
+
+    // Is face f of box bx (block b, see-through or not) hidden by shape id `nid` next door?
+    const coveredBy = (b, see, x, y, z, bx, f, nid) => {
+      if (nid === 1) return true;
+      if (nid === 0) return false;
+      const a = f >> 1, sign = f & 1 ? -1 : 1, u = (a + 1) % 3, v = (a + 2) % 3;
+      if (shapeSee[nid]) {
+        // See-through blocks only hide faces of the same block (a glass wall has no inner faces).
+        if (!see) return false;
+        const o = blocks.get(`${x + (a === 0 ? sign : 0)},${y + (a === 1 ? sign : 0)},${z + (a === 2 ? sign : 0)}`);
+        if (!o || o.mat !== b.mat) return false;
+      } else if (see) return false;
+      for (const ob of shapes[nid]) {
+        if ((sign > 0 ? ob[a] !== 0 : ob[a + 3] !== 1)) continue;
+        if (ob[u] <= bx[u] && ob[u + 3] >= bx[u + 3] && ob[v] <= bx[v] && ob[v + 3] >= bx[v + 3]) return true;
+      }
+      return false;
+    };
+
+    // Per material: blocks in layer order (a counting sort on y), then only their visible faces
+    // into one mesh. Top faces under a block are left out too; when the view is sliced, the cut
+    // layer gets its covered tops back from a separate "cap" mesh so it never shows holes.
+    const byMat = new Map();
+    const ny = hi.y - lo.y + 1;
+    for (const [key, b] of blocks) {
+      const [x, y, z] = cellOf(key, b);
+      const sid = sidOf(b);
+      if (occ) occ[at(x, y, z)] = sid;
+      const mat = b.mat || 'unknown';
+      let list = byMat.get(mat);
+      if (!list) { list = { color: b.color || '#888888', refs: [], cells: [], sids: [], perY: new Uint32Array(ny + 1) }; byMat.set(mat, list); }
+      list.refs.push(b); list.cells.push(x, y, z); list.sids.push(sid); list.perY[y - lo.y + 1]++;
+    }
+    const nidAt = (x, y, z, f) => {
+      const a = f >> 1, sign = f & 1 ? -1 : 1;
+      return sidOf(blocks.get(`${x + (a === 0 ? sign : 0)},${y + (a === 1 ? sign : 0)},${z + (a === 2 ? sign : 0)}`));
+    };
+    for (const [mat, { color, refs, cells, sids, perY }] of byMat) {
+      const n = refs.length;
+      for (let i = 1; i <= ny; i++) perY[i] += perY[i - 1];
+      const order = new Uint32Array(n);
+      for (let i = 0; i < n; i++) order[perY[cells[i * 3 + 1] - lo.y]++] = i;
+      const ys = new Int32Array(n), start = new Uint32Array(n + 1), capStart = new Uint32Array(n + 1);
+      const faces = new FaceBuf(n * 3), caps = new FaceBuf(n >> 2);
+      const see = seeThrough({ mat });
+      for (let k = 0; k < n; k++) {
+        const i = order[k], b = refs[i], x = cells[i * 3], y = cells[i * 3 + 1], z = cells[i * 3 + 2];
+        ys[k] = y; start[k] = faces.n * 1.5; capStart[k] = caps.n * 1.5; // 6 indices per 4 vertices
+        const idx = occ ? at(x, y, z) : 0;
+        for (const bx of shapes[sids[i]] || shapeBoxes(b)) {
+          for (let f = 0; f < 6; f++) {
+            const a = f >> 1;
+            let hidden = false;
+            if (f & 1 ? bx[a] === 0 : bx[a + 3] === 1) { // on the cell's edge
+              const nid = occ ? occ[idx + STEP[f]] : nidAt(x, y, z, f);
+              hidden = nid === 1 || (nid !== 0 && coveredBy(b, see, x, y, z, bx, f, nid));
+            }
+            if (!hidden) faces.quad(x, y, z, bx, f);
+            else if (f === 2) caps.quad(x, y, z, bx, f); // a covered top face
+          }
         }
       }
-    }
-
-    // Pass 2: build an InstancedMesh per bucket with instances sorted by y (slicing uses .count).
-    const m4 = new THREE.Matrix4();
-    for (const b of buckets.values()) {
-      const n = b.items.length / 4;
-      const order = new Uint32Array(n);
-      for (let i = 0; i < n; i++) order[i] = i;
-      const items = b.items;
-      order.sort((a, c) => items[a * 4 + 1] - items[c * 4 + 1]);
-      const ys = new Int32Array(n);
-      const { base, hl } = this._getMaterials(b.mat, b.color);
-      const geo = this.geos.get(b.kind);
-      const mesh = new THREE.InstancedMesh(geo, base, n);
-      mesh.frustumCulled = false;
-      let maxLayer = 0, run = 0, lastY = null;
-      for (let i = 0; i < n; i++) {
-        const j = order[i] * 4;
-        const y = items[j + 1];
-        ys[i] = y;
-        if (y === lastY) run++; else { run = 1; lastY = y; }
-        if (run > maxLayer) maxLayer = run;
-        m4.makeRotationY(items[j + 3]);
-        m4.setPosition(items[j] + 0.5, y + 0.5, items[j + 2] + 0.5);
-        mesh.setMatrixAt(i, m4);
-      }
-      mesh.instanceMatrix.needsUpdate = true;
-      const hlMesh = new THREE.InstancedMesh(geo, hl, Math.max(1, maxLayer));
-      hlMesh.frustumCulled = false;
-      hlMesh.count = 0;
-      hlMesh.visible = false;
-      hlMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      this.blockGroup.add(mesh, hlMesh);
-      this.instanced.push({ mesh, hl: hlMesh, ys, total: n });
+      start[n] = faces.n * 1.5; capStart[n] = caps.n * 1.5;
+      const { base, hl } = this._getMaterials(mat, color);
+      const geo = faces.geometry(grid);
+      const mesh = new THREE.Mesh(geo, base);
+      const hlMesh = new THREE.Mesh(shareGeometry(geo), hl);
+      const capMesh = new THREE.Mesh(caps.n ? caps.geometry(grid) : new THREE.BufferGeometry(), hl);
+      for (const m of [mesh, hlMesh, capMesh]) m.frustumCulled = false;
+      hlMesh.visible = capMesh.visible = false;
+      this.blockGroup.add(mesh, hlMesh, capMesh);
+      this.instanced.push({ mesh, hl: hlMesh, cap: capMesh, ys, start, capStart, total: n });
     }
 
     // Grid helper at the lowest layer.
@@ -422,21 +598,16 @@ export class Viewer {
    */
   pickBlock(e) {
     this._setNDC(e);
-    const targets = [];
-    for (const it of this.instanced) { if (it.mesh.count > 0) targets.push(it.mesh); if (it.hl.visible && it.hl.count > 0) targets.push(it.hl); }
-    const hits = this.raycaster.intersectObjects(targets, false);
     const dir = this.raycaster.ray.direction;
     // Stairs face the way you look (like Minecraft), on the dominant horizontal axis.
     const facing = Math.abs(dir.x) > Math.abs(dir.z) ? (dir.x > 0 ? 'east' : 'west') : (dir.z > 0 ? 'south' : 'north');
-    if (hits.length) {
-      const hit = hits[0];
-      const m4 = new THREE.Matrix4();
-      hit.object.getMatrixAt(hit.instanceId, m4);
-      const n = hit.face.normal.clone().applyMatrix3(new THREE.Matrix3().setFromMatrix4(m4)).normalize();
-      const nr = [Math.round(n.x), Math.round(n.y), Math.round(n.z)];
-      const p = hit.point;
-      const cell = [Math.floor(p.x - n.x * 0.01), Math.floor(p.y - n.y * 0.01), Math.floor(p.z - n.z * 0.01)];
-      const place = [Math.floor(p.x + n.x * 0.5), Math.floor(p.y + n.y * 0.5), Math.floor(p.z + n.z * 0.5)];
+    const hit = this._castBlocks();
+    if (hit) {
+      const { cell, t, axis, sign } = hit;
+      const o = this.raycaster.ray.origin;
+      const p = { x: o.x + dir.x * t, y: o.y + dir.y * t, z: o.z + dir.z * t };
+      const nr = [0, 0, 0]; nr[axis] = sign;
+      const place = [Math.floor(p.x + nr[0] * 0.5), Math.floor(p.y + nr[1] * 0.5), Math.floor(p.z + nr[2] * 0.5)];
       // Top half when you click a bottom face, or the upper half of a side face.
       const fy = p.y - Math.floor(p.y);
       const half = nr[1] < 0 ? 'top' : nr[1] > 0 ? 'bottom' : (fy > 0.5 ? 'top' : 'bottom');
@@ -446,6 +617,44 @@ export class Viewer {
     const gp = this._planePoint(e, y);
     if (!gp) return null;
     return { cell: null, place: [Math.floor(gp.x), y, Math.floor(gp.z)], normal: [0, 1, 0], half: 'bottom', facing, ground: true };
+  }
+
+  /**
+   * Walk the pointer ray cell by cell through the block grid (only up to the sliced layer)
+   * and return the first block shape it enters: {cell, t, axis, sign}, or null.
+   */
+  _castBlocks() {
+    const g = this.grid;
+    if (!g || !g.blocks || !g.blocks.size) return null;
+    const ray = this.raycaster.ray;
+    const o = [ray.origin.x, ray.origin.y, ray.origin.z], d = [ray.direction.x, ray.direction.y, ray.direction.z];
+    const top = this.sliceY === null || this.sliceY === undefined ? g.max.y : Math.min(g.max.y, this.sliceY);
+    if (top < g.min.y) return null;
+    const span = rayBox(o, d, [g.min.x, g.min.y, g.min.z, g.max.x + 1, top + 1, g.max.z + 1]);
+    let t = span ? span.t : 0;
+    const inside = !span && o[0] >= g.min.x && o[0] <= g.max.x + 1 && o[1] >= g.min.y && o[1] <= top + 1 && o[2] >= g.min.z && o[2] <= g.max.z + 1;
+    if (!span && !inside) return null;
+    const c = [0, 1, 2].map((a) => Math.floor(o[a] + d[a] * (t + 1e-6)));
+    const step = d.map((v) => (v > 0 ? 1 : v < 0 ? -1 : 0));
+    const tMax = [0, 1, 2].map((a) => (step[a] ? ((c[a] + (step[a] > 0 ? 1 : 0)) - o[a]) / d[a] : Infinity));
+    const tDelta = d.map((v) => (v ? Math.abs(1 / v) : Infinity));
+    const lo = [g.min.x, g.min.y, g.min.z], hi = [g.max.x, top, g.max.z];
+    for (let guard = 0; guard < 4096; guard++) {
+      if (c[0] < lo[0] - 1 || c[0] > hi[0] + 1 || c[1] < lo[1] - 1 || c[1] > hi[1] + 1 || c[2] < lo[2] - 1 || c[2] > hi[2] + 1) return null;
+      const b = c[1] <= top ? g.blocks.get(`${c[0]},${c[1]},${c[2]}`) : undefined;
+      if (b) {
+        let best = null;
+        for (const bx of shapeBoxes(b)) {
+          const h = rayBox(o, d, [c[0] + bx[0], c[1] + bx[1], c[2] + bx[2], c[0] + bx[3], c[1] + bx[4], c[2] + bx[5]]);
+          if (h && (!best || h.t < best.t)) best = h;
+        }
+        if (best) return { cell: [c[0], c[1], c[2]], ...best };
+      }
+      const a = tMax[0] < tMax[1] ? (tMax[0] < tMax[2] ? 0 : 2) : (tMax[1] < tMax[2] ? 1 : 2);
+      c[a] += step[a];
+      tMax[a] += tDelta[a];
+    }
+    return null;
   }
 
   /** Outline these world cells as the selected hand-placed blocks. */
@@ -687,9 +896,9 @@ export class Viewer {
   }
 
   _disposeInstanced() {
-    for (const { mesh, hl } of this.instanced) {
-      this.blockGroup.remove(mesh, hl);
-      mesh.dispose(); hl.dispose();
+    for (const { mesh, hl, cap } of this.instanced) {
+      this.blockGroup.remove(mesh, hl, cap);
+      mesh.geometry.dispose(); hl.geometry.dispose(); cap.geometry.dispose(); // hl shares the mesh's buffers (a second release is a no-op)
     }
     this.instanced = [];
   }
@@ -698,19 +907,17 @@ export class Viewer {
     const y = this.sliceY;
     for (const it of this.instanced) {
       if (y === null) {
-        it.mesh.count = it.total;
-        it.hl.visible = false; it.hl.count = 0;
+        it.mesh.geometry.setDrawRange(0, Infinity);
+        it.hl.visible = it.cap.visible = false;
         continue;
       }
+      // Below the cut: the normal mesh. The cut layer: highlighted, with its covered tops.
       const lo = lowerBound(it.ys, y), hi = lowerBound(it.ys, y + 1);
-      it.mesh.count = lo;
-      const n = hi - lo;
-      if (n > 0) {
-        it.hl.instanceMatrix.array.set(it.mesh.instanceMatrix.array.subarray(lo * 16, hi * 16));
-        it.hl.instanceMatrix.needsUpdate = true;
-        it.hl.count = n;
-        it.hl.visible = true;
-      } else { it.hl.visible = false; it.hl.count = 0; }
+      it.mesh.geometry.setDrawRange(0, it.start[lo]);
+      it.hl.geometry.setDrawRange(it.start[lo], it.start[hi] - it.start[lo]);
+      it.hl.visible = hi > lo;
+      it.cap.geometry.setDrawRange(it.capStart[lo], it.capStart[hi] - it.capStart[lo]);
+      it.cap.visible = it.capStart[hi] > it.capStart[lo];
     }
   }
 
@@ -741,6 +948,12 @@ export class Viewer {
     for (const s of d.segments || []) if (s.id === id) return { type: 'segment', obj: s };
     for (const f of d.fills || []) if (f.id === id) return { type: 'fill', obj: f };
     return null;
+  }
+
+  /** Redraw the selection outline and handles from the (live-edited) design. */
+  refreshSelection() {
+    this._rebuildSelection();
+    this.requestRender();
   }
 
   _rebuildSelection() {

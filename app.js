@@ -229,7 +229,9 @@ function rebuildNow(structural) {
   const doStructural = structural === true || pendingStructural;
   pendingStructural = false;
   try {
+    const t0 = performance.now();
     state.grid = buildGrid(state.design);
+    state.buildMs = performance.now() - t0;
   } catch (e) {
     console.error(e);
     toast('Could not build the design: ' + (e.message || e), true);
@@ -305,7 +307,13 @@ function liveEdit(id, patch) {
   }
   Object.assign(f.obj, patch);
   persist();
-  scheduleRebuild(false);
+  if (state.buildMs > 150 && viewer) {
+    // A big build: the outline follows the pointer now, the blocks catch up when it rests
+    // (or on release).
+    viewer.refreshSelection();
+    clearTimeout(rebuildTimer);
+    rebuildTimer = setTimeout(() => rebuildNow(), 450);
+  } else scheduleRebuild(false);
   syncPropValues();
 }
 function applySlice() {

@@ -211,7 +211,7 @@ export class Viewer {
   //              onResize(id, {x,z,w,d}) /* live during handle drag, boxes only */, onCommit() /* pointerup after a move/resize that changed something */ }
   setDesign(design)      // (re)build pick proxies (invisible boxes per box: footprint × (wallH + roof height), per pillar, per segment),
                          // footprint outline (thin line at baseY) for every box, overhang outline (dashed) + 4 resize handles (small cubes at mid-edges of the top at height E) for the SELECTED box only
-  setGrid(grid)          // rebuild instanced meshes: InstancedMesh per geometry kind (full, slab bottom, slab top, 5 stair shapes × 2 halves, wall post), per-instance color from block.color; MeshLambertMaterial + hemisphere + directional light. GridHelper at y = grid.min.y with 1-block cells.
+  setGrid(grid)          // rebuild the block meshes: ONE merged, face-culled mesh per family (all shapes: full, slabs, stairs, walls, panes), blocks in layer order. A face is left out when it lies on the cell edge and the shape next door covers it (opaque cubes hide anything; other opaque shapes hide a face their own boxes fully cover; see-through blocks only hide faces of the same block). Slicing uses draw ranges; the cut layer is drawn with the highlight material plus a 'cap' mesh of its covered top faces. Picking walks the pointer ray cell by cell through the grid (DDA) against each block's boxes, not the meshes. MeshLambertMaterial + hemisphere + directional light. GridHelper at y = grid.min.y with 1-block cells.
   setSelection(id|null)
   setSliceY(yMax|null)   // when set, hide all blocks with y > yMax. Blocks with y == yMax get a highlight tint (lerp color 35% toward white).
   frameAll()             // fit camera to grid bounds
@@ -234,7 +234,7 @@ export function familyIcon(familyKey, size=28) => HTMLCanvasElement  // small ca
 ```
 No DOM dependency beyond document.createElement('canvas'). No three.js import here.
 
-Viewer uses these: one MeshLambertMaterial per family with `map = new THREE.CanvasTexture(familyTexture(key))` (NearestFilter, no mipmaps-blur: magFilter Nearest), so instanced meshes are per (geometry kind × family). Faces: box geometries use the same texture on all faces; the hemisphere light handles top/side shading. Slice highlight: use `material.emissive` on a cloned highlight material instead of per-instance color.
+Viewer uses these: one MeshLambertMaterial per family with `map = new THREE.CanvasTexture(familyTexture(key))` (NearestFilter, no mipmaps-blur: magFilter Nearest), so block meshes are per family. Faces: box geometries use the same texture on all faces; the hemisphere light handles top/side shading. Slice highlight: use `material.emissive` on a cloned highlight material instead of per-instance color.
 
 ## plans.js (UI owns)
 

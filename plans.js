@@ -10,6 +10,24 @@ function parseKey(key) {
   return [Number(p[0]), Number(p[1]), Number(p[2])];
 }
 
+// Blocks of one grid by layer: [x, z, block] per y. Built once per grid (grids are never
+// changed in place), so plans and legends don't scan every block each time.
+const layerCache = new WeakMap();
+function layerBlocks(grid, y) {
+  let idx = layerCache.get(grid);
+  if (!idx) {
+    idx = new Map();
+    for (const [key, b] of grid.blocks) {
+      const [x, by, z] = b.y !== undefined ? [b.x, b.y, b.z] : parseKey(key);
+      let l = idx.get(by);
+      if (!l) { l = []; idx.set(by, l); }
+      l.push([x, z, b]);
+    }
+    layerCache.set(grid, idx);
+  }
+  return idx.get(y) || [];
+}
+
 function nameFromId(id, kind) {
   const base = String(id || '').replace(/^minecraft:/, '').replace(/_/g, ' ').trim();
   if (!base) return KIND_LABEL[kind] || 'block';
@@ -24,8 +42,7 @@ export function layerRange(grid) {
 export function layerLegend(grid, y) {
   const rows = new Map();
   if (!grid || !grid.blocks) return [];
-  for (const [key, b] of grid.blocks) {
-    if (parseKey(key)[1] !== y) continue;
+  for (const [, , b] of layerBlocks(grid, y)) {
     let r = rows.get(b.id);
     if (!r) {
       r = { id: b.id, kind: b.kind, mat: b.mat, name: nameFromId(b.id, b.kind), count: 0, color: b.color };
@@ -253,9 +270,8 @@ export function drawLayer(canvas, grid, y, opts = {}) {
   // ghost of the layer below
   if (ghostBelow && gb.blocks) {
     ctx.globalAlpha = 0.22;
-    for (const [key, b] of gb.blocks) {
-      const [x, by, z] = parseKey(key);
-      if (by !== y - 1 || !inBounds(x, z)) continue;
+    for (const [x, z, b] of layerBlocks(gb, y - 1)) {
+      if (!inBounds(x, z)) continue;
       ctx.fillStyle = b.color || '#888888';
       ctx.fillRect(toPx(x) + 1, toPy(z) + 1, cell - 2, cell - 2);
     }
@@ -264,9 +280,8 @@ export function drawLayer(canvas, grid, y, opts = {}) {
 
   // blocks on this layer
   if (gb.blocks) {
-    for (const [key, b] of gb.blocks) {
-      const [x, by, z] = parseKey(key);
-      if (by !== y || !inBounds(x, z)) continue;
+    for (const [x, z, b] of layerBlocks(gb, y)) {
+      if (!inBounds(x, z)) continue;
       drawBlock(ctx, b, toPx(x), toPy(z), cell);
     }
   }

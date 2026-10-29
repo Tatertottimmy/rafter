@@ -792,6 +792,7 @@ export function buildGrid(input) {
   const surface = new Map();   // colKey -> {s, boxId} (highest tier's roof per column)
   const outSurface = new Map();
   const regions = design.boxes.map(boxRegion);
+  const boxIndex = new Map(design.boxes.map((o, i) => [o.id, i]));
   // Roof tiers: a box that stands clear above another box's roof (a tower on a roof) gets its
   // own roof layer instead of joining that roof's height map, so the lower roof runs on
   // underneath, right up to its walls. Boxes on one tier merge as before (L-shapes, dormers).
@@ -801,7 +802,12 @@ export function buildGrid(input) {
   let roofMin = roofMins[0];
   const roofMinOf = (bi) => roofMins[tiers.indexOf(tierOf[bi])];
 
-  const put = (x, y, z, block) => { blocks.set(blockKey(x, y, z), block); };
+  // Every block carries its own cell (x, y, z), so passes over the map never re-parse keys.
+  const put = (x, y, z, block) => {
+    if (block.x !== undefined && (block.x !== x || block.y !== y || block.z !== z)) block = { ...block };
+    block.x = x; block.y = y; block.z = z;
+    blocks.set(blockKey(x, y, z), block);
+  };
   const putRoof = (x, y, z, block) => {
     put(x, y, z, block);
     const ck = colKey(x, z);
@@ -986,29 +992,33 @@ export function buildGrid(input) {
         for (let y = Math.max(low, b.baseY); y <= low + 512; y++) {
           const k = blockKey(cx, y, cz), blk = blocks.get(k);
           if (!blk) break;
-          if (blk.role === 'roof' && tierOf[design.boxes.findIndex((o) => o.id === blk.src)] === tiers[ti]) blocks.delete(k);
+          if (blk.role === 'roof' && tierOf[boxIndex.get(blk.src)] === tiers[ti]) blocks.delete(k);
         }
       }
     }
     // Eaves of a lower roof that hang off a wall this box now owns (a tower flush with a gable
     // end) would stick out across its face as a ledge: they go too.
-    for (const [k, blk] of blocks) {
-      if (blk.role !== 'roof') continue;
-      const ai = design.boxes.findIndex((o) => o.id === blk.src);
-      if (ai < 0 || tierOf[ai] >= tierOf[bi]) continue;
-      const A = design.boxes[ai];
-      const [x, y, z] = parseKey(k);
-      if (y < b.baseY || (x >= A.x && x < A.x + A.w && z >= A.z && z < A.z + A.d)) continue;
-      const px = Math.min(Math.max(x, A.x), A.x + A.w - 1), pz = Math.min(Math.max(z, A.z), A.z + A.d - 1);
-      if (px >= b.x && px < b.x + b.w && pz >= b.z && pz < b.z + b.d) blocks.delete(k);
-    }
+    design.boxes.forEach((A, ai) => {
+      if (tierOf[ai] >= tierOf[bi]) return;
+      const reg = regions[ai], mins = roofMinOf(ai);
+      for (let z = reg.z0; z <= reg.z1; z++) for (let x = reg.x0; x <= reg.x1; x++) {
+        if (x >= A.x && x < A.x + A.w && z >= A.z && z < A.z + A.d) continue; // under A itself
+        const px = Math.min(Math.max(x, A.x), A.x + A.w - 1), pz = Math.min(Math.max(z, A.z), A.z + A.d - 1);
+        if (px < b.x || px >= b.x + b.w || pz < b.z || pz >= b.z + b.d) continue;
+        const low = mins.get(colKey(x, z));
+        if (low === undefined) continue;
+        for (let y = Math.max(low, b.baseY); y <= low + 512; y++) {
+          const k = blockKey(x, y, z), blk = blocks.get(k);
+          if (!blk) break;
+          if (blk.role === 'roof' && blk.src === A.id) blocks.delete(k);
+        }
+      }
+    });
   });
 
   // ---- STEP 5: stair shape pass -------------------------------------------------------
-  for (const [key, blk] of blocks) {
-    if (blk.kind !== 'stair') continue;
-    const [x, y, z] = parseKey(key);
-    blk.props.shape = stairShape(blocks, x, y, z, blk);
+  for (const blk of blocks.values()) {
+    if (blk.kind === 'stair') blk.props.shape = stairShape(blocks, blk.x, blk.y, blk.z, blk);
   }
 
   // SPEC-DEVIATION (seal): on curved and round roofs a stair can take a corner shape, or a
@@ -1016,14 +1026,14 @@ export function buildGrid(input) {
   // part of that block then looks straight into the room. Close every such gap with a full
   // block in the taller column. Straight-profile roofs never trigger this.
   const sealed = [];
-  for (const [key, blk] of blocks) {
+  for (const blk of blocks.values()) {
     if (blk.role !== 'roof' || blk.kind === 'full') continue;
-    const [x, y, z] = parseKey(key);
+    const { x, y, z } = blk;
     for (const d of DIRS) {
       if (upperCoversFace(blk, d)) continue;
       const nx = x + DIR_OFFSET[d][0], nz = z + DIR_OFFSET[d][1];
       if (has(nx, y, nz)) continue;
-      const srcBi = design.boxes.findIndex((o) => o.id === blk.src);
+      const srcBi = boxIndex.get(blk.src) ?? -1;
       const low = srcBi < 0 ? undefined : roofMinOf(srcBi).get(colKey(nx, nz));
       if (low === undefined || low <= y) continue;
       // Only within one box: a tower next to a lower roof is open air there, not a gap.
@@ -1032,7 +1042,7 @@ export function buildGrid(input) {
     }
   }
   for (const [nx, y, nz, src, low] of sealed) {
-    roofMin = roofMinOf(design.boxes.findIndex((o) => o.id === src.src));
+    roofMin = roofMinOf(boxIndex.get(src.src));
     for (let yy = y; yy < low; yy++) if (!has(nx, yy, nz)) putRoof(nx, yy, nz, tag(fullBlock(src.mat, 'roof'), src.src, src.path));
   }
 
@@ -1194,12 +1204,12 @@ export function buildGrid(input) {
     const amount = { wallMaterial: va.wall / 100, 'roof.material': va.roof / 100 };
     const E = b.baseY + b.wallH;
     let roofTop = E + 1;
-    for (const [key, blk] of blocks) if (blk.src === b.id && blk.path === 'roof.material') roofTop = Math.max(roofTop, parseKey(key)[1] + 1);
+    for (const blk of blocks.values()) if (blk.src === b.id && blk.path === 'roof.material') roofTop = Math.max(roofTop, blk.y + 1);
     for (const [key, blk] of blocks) {
       if (blk.src !== b.id) continue;
       const mix = mixes[blk.path];
       if (!mix || !mix.length) continue;
-      const [x, y, z] = parseKey(key);
+      const { x, y, z } = blk;
       const v = blk.path === 'roof.material'
         ? variationValue(va.style, va.seed, x, y, z, E - 1, roofTop) // roofs weather from the eaves up
         : variationValue(va.style, va.seed, x, y, z, b.baseY, E);
@@ -1224,7 +1234,7 @@ export function buildGrid(input) {
       if (!cur) continue;
       const nb = reskin(cur, e.mat) || tag(fullBlock(e.mat, cur.role), cur.src, cur.path);
       nb.edited = true;
-      blocks.set(key, nb);
+      put(e.x, e.y, e.z, nb);
       continue;
     }
     let blk;
@@ -1234,13 +1244,11 @@ export function buildGrid(input) {
     else blk = fullBlock(e.mat, 'placed', e.axis);
     blk.src = e.owner || null;
     blk.edited = true;
-    blocks.set(key, blk);
+    put(e.x, e.y, e.z, blk);
   }
   if (editedStairs || edits.length || pillarStairs) {
-    for (const [key, blk] of blocks) {
-      if (blk.kind !== 'stair') continue;
-      const [x, y, z] = parseKey(key);
-      blk.props.shape = stairShape(blocks, x, y, z, blk);
+    for (const blk of blocks.values()) {
+      if (blk.kind === 'stair') blk.props.shape = stairShape(blocks, blk.x, blk.y, blk.z, blk);
     }
   }
 
@@ -1249,8 +1257,7 @@ export function buildGrid(input) {
   if (blocks.size > 0) {
     min = { x: Infinity, y: Infinity, z: Infinity };
     max = { x: -Infinity, y: -Infinity, z: -Infinity };
-    for (const key of blocks.keys()) {
-      const [x, y, z] = parseKey(key);
+    for (const { x, y, z } of blocks.values()) {
       if (x < min.x) min.x = x; if (y < min.y) min.y = y; if (z < min.z) min.z = z;
       if (x > max.x) max.x = x; if (y > max.y) max.y = y; if (z > max.z) max.z = z;
     }
