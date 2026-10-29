@@ -67,6 +67,8 @@ export function objBounds(type, o) {
   return { x0: Math.min(o.x0, o.x1), x1: Math.max(o.x0, o.x1) + 1, y0: o.baseY, y1: o.baseY + Math.max(1, o.h), z0: Math.min(o.z0, o.z1), z1: Math.max(o.z0, o.z1) + 1 };
 }
 
+const NODE_OPACITY = 0.62; // resize nodes at rest; solid while hovered
+
 // Largest size per axis (matches validateDesign).
 const SIZE_MAX = { box: { xz: 512, y: 128 }, fill: { xz: 256, y: 128 }, pillar: { xz: 5, y: 256 }, segment: { xz: 8192, y: 256 } };
 
@@ -798,6 +800,9 @@ export class Viewer {
     this._clearGroup(this.selGroup);
     this.handles = [];
     this._nodes = [];
+    this._gizmo = null;
+    this._knob = null;
+    this._hot = null;
     const found = this._findObject(this.selectedId);
     if (!found) return;
     const accent = new THREE.Color(cssVar(this.container, '--accent', '#d9814a'));
@@ -809,14 +814,15 @@ export class Viewer {
     const P = (x, y, z) => new THREE.Vector3(x, y, z);
     const c = [P(x0, y0, z0), P(x1, y0, z0), P(x1, y0, z1), P(x0, y0, z1), P(x0, y1, z0), P(x1, y1, z0), P(x1, y1, z1), P(x0, y1, z1)];
     const edges = [0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7].map((k) => c[k]);
-    const frame = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(edges), solid);
+    // Faint: it frames the object without shouting over it.
+    const frame = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(edges), new THREE.LineBasicMaterial({ color: accent, depthTest: false, transparent: true, opacity: 0.38 }));
     frame.renderOrder = 10;
     this.selGroup.add(frame);
     if (type === 'box') {
       const oh = Math.max(0, (obj.roof && obj.roof.overhang) | 0);
       if (oh) {
         // overhang outline (dashed) at eave height
-        const dashed = new THREE.LineDashedMaterial({ color: accent, dashSize: 0.45, gapSize: 0.25, depthTest: false, transparent: true });
+        const dashed = new THREE.LineDashedMaterial({ color: accent, dashSize: 0.45, gapSize: 0.25, depthTest: false, transparent: true, opacity: 0.3 });
         const l3 = this._rectLine(x0 - oh, z0 - oh, x1 + oh, z1 + oh, y1 + 0.02, dashed, true);
         l3.renderOrder = 10;
         this.selGroup.add(l3);
@@ -826,6 +832,7 @@ export class Viewer {
     else if (type === 'segment') this._addRotateHandle(obj, 'segment', x0, z0, y1, accent, solid);
     this._addNodes(obj, type, b, accent);
     this._addMoveGizmo(obj, (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+    this._scaleNodes();
   }
 
   /**
@@ -835,16 +842,16 @@ export class Viewer {
    */
   _addNodes(obj, type, b, accent) {
     const ok = resizableSides(type, obj);
-    const faceGeo = new THREE.BoxGeometry(1, 1, 1), cornerGeo = new THREE.SphereGeometry(0.62, 16, 10);
-    const mat = new THREE.MeshBasicMaterial({ color: accent, depthTest: false, transparent: true, opacity: 0.95 });
-    const rim = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.95 });
+    const faceGeo = new THREE.BoxGeometry(1, 1, 1), cornerGeo = new THREE.SphereGeometry(0.55, 14, 8);
     const mid = { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2, z: (b.z0 + b.z1) / 2 };
     const add = (geo, pos, data) => {
       const g = new THREE.Group();
       g.position.set(pos[0], pos[1], pos[2]);
-      const back = new THREE.Mesh(geo, rim); back.scale.setScalar(1.35); back.renderOrder = 11;
-      const front = new THREE.Mesh(geo, mat); front.renderOrder = 12;
-      front.userData = { ...data, id: obj.id, pos };
+      // Translucent until hovered (see _hoverHandles).
+      const back = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: NODE_OPACITY * 0.6 }));
+      back.scale.setScalar(1.25); back.renderOrder = 11; back.userData.baseOpacity = back.material.opacity;
+      const front = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: accent, depthTest: false, transparent: true, opacity: NODE_OPACITY })); front.renderOrder = 12;
+      front.userData = { ...data, id: obj.id, pos, baseOpacity: NODE_OPACITY };
       g.add(back, front);
       g.userData.node = true;
       this.selGroup.add(g);
@@ -869,15 +876,44 @@ export class Viewer {
     this._scaleNodes();
   }
 
-  /** Keep resize nodes a steady size on screen. */
+  /** Keep resize nodes and the move gizmo a steady size on screen at any zoom. */
   _scaleNodes() {
-    if (!this._nodes) return;
-    for (const g of this._nodes) {
+    const fit = (g, k, min) => {
       const dist = this.camera.position.distanceTo(g.position);
-      g.scale.setScalar(Math.max(0.25, dist * 0.012));
+      g.scale.setScalar(Math.max(min, dist * k) * (g.userData.hot ? 1.3 : 1));
       g.updateMatrixWorld(true); // so picking matches before the next frame is drawn
-    }
+    };
+    for (const g of this._nodes || []) fit(g, 0.0068, 0.12);
+    if (this._gizmo) fit(this._gizmo, 0.022, 0.3);
+    if (this._knob) fit(this._knob, 0.016, 0.35);
   }
+
+  /** The handle under the pointer (after _setNDC). Resize nodes win over the move arrows that
+   * may pass in front of them: they are the smaller, more precise target. */
+  _handleHit() {
+    const hits = this.raycaster.intersectObjects(this.handles, false);
+    return hits.find((h) => h.object.userData.type !== 'axis') || hits[0] || null;
+  }
+
+  /** Light up the node or arrow under the pointer (solid, a little bigger) and show a grab cursor. */
+  _hoverHandles(e) {
+    let hot = null;
+    if (this.handles.length) {
+      this._setNDC(e);
+      const hit = this._handleHit();
+      if (hit) hot = hit.object.parent;
+    }
+    if (hot === this._hot) return;
+    const light = (g, on) => g && g.traverse((o) => { if (o.userData.baseOpacity !== undefined) o.material.opacity = on ? 1 : o.userData.baseOpacity; });
+    light(this._hot, false);
+    if (this._hot) this._hot.userData.hot = false;
+    this._hot = hot;
+    if (hot) { hot.userData.hot = true; light(hot, true); }
+    this.renderer.domElement.style.cursor = hot ? 'grab' : this.tool === 'select' ? '' : 'crosshair';
+    this._scaleNodes();
+    this.requestRender();
+  }
+
 
   /**
    * KSP-style translate gizmo: red x (east), green y (up), blue z (south) arrows from the
@@ -891,25 +927,30 @@ export class Viewer {
       ['z', 0x3e63dd, new THREE.Vector3(0, 0, 1)],
     ];
     const up = new THREE.Vector3(0, 1, 0);
-    const hub = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 10), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.95 }));
-    hub.position.set(cx, cy, cz); hub.renderOrder = 13;
-    this.selGroup.add(hub);
+    // One group at the centre, scaled with the zoom (_scaleNodes) so it stays a steady size.
+    const gz = new THREE.Group();
+    gz.position.set(cx, cy, cz);
+    this.selGroup.add(gz);
+    this._gizmo = gz;
+    const hub = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 10), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.75 }));
+    hub.renderOrder = 13;
+    gz.add(hub);
     for (const [axis, color, dir] of axes) {
-      const mat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.95 });
+      const mat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.75 });
       const g = new THREE.Group();
-      g.position.set(cx, cy, cz);
       g.quaternion.setFromUnitVectors(up, dir);
       const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, len, 10), mat);
       shaft.position.y = len / 2;
       const head = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.6, 16), mat);
       head.position.y = len + 0.3;
       shaft.renderOrder = head.renderOrder = 13;
+      shaft.userData.baseOpacity = head.userData.baseOpacity = 0.75;
       // Invisible, generous hit target along the whole arrow.
       const hit = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, len + 0.6, 8), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthTest: false, depthWrite: false }));
       hit.position.y = (len + 0.6) / 2 + 0.2;
       hit.userData = { type: 'axis', axis, id: obj.id, origin: [cx, cy, cz] };
       g.add(shaft, head, hit);
-      this.selGroup.add(g);
+      gz.add(g);
       this.handles.push(hit);
     }
   }
@@ -942,12 +983,16 @@ export class Viewer {
   _addRotateHandle(obj, objType, cx0, cz0, y, accent, lineMat) {
     const kx = cx0 - 1.6, kz = cz0 - 1.6;
     const stalk = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(cx0, y + 0.02, cz0), new THREE.Vector3(kx, y + 0.02, kz)]);
-    const ln = new THREE.Line(stalk, lineMat); ln.renderOrder = 10;
-    const mat = new THREE.MeshBasicMaterial({ color: accent, depthTest: false, transparent: true, opacity: 0.95, side: THREE.DoubleSide });
-    const back = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
+    const ln = new THREE.Line(stalk, new THREE.LineBasicMaterial({ color: accent, depthTest: false, transparent: true, opacity: 0.35 })); ln.renderOrder = 10;
+    const mat = new THREE.MeshBasicMaterial({ color: accent, depthTest: false, transparent: true, opacity: 0.8, side: THREE.DoubleSide });
+    const back = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
+    // One group at the knob, scaled with the zoom (_scaleNodes); translucent until hovered.
+    const kg = new THREE.Group();
+    kg.position.set(kx, y, kz);
+    this._knob = kg;
     // A disc with a three-quarter ring and arrowhead on it: reads as "rotate".
     const knob = new THREE.Group();
-    knob.position.set(kx, y + 0.03, kz);
+    knob.position.set(0, 0.03, 0);
     knob.rotation.x = -Math.PI / 2;
     const disc = new THREE.Mesh(new THREE.CircleGeometry(0.8, 32), back);
     const a0 = 0.5, sweep = Math.PI * 1.45;
@@ -957,11 +1002,12 @@ export class Viewer {
     tip.rotation.z = a0; // arrowhead at the start of the arc, pointing clockwise as seen from above
     disc.renderOrder = 11; ring.renderOrder = tip.renderOrder = 12;
     knob.add(disc, ring, tip);
+    disc.userData.baseOpacity = 0.5; ring.userData.baseOpacity = tip.userData.baseOpacity = 0.8;
     // Invisible, generous hit target.
     const hit = new THREE.Mesh(new THREE.SphereGeometry(0.85, 12, 8), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthTest: false, depthWrite: false }));
-    hit.position.set(kx, y, kz);
     hit.userData = { type: 'rotate', id: obj.id, y, objType };
-    this.selGroup.add(ln, knob, hit);
+    kg.add(knob, hit);
+    this.selGroup.add(ln, kg);
     this.handles.push(hit);
   }
 
@@ -974,8 +1020,8 @@ export class Viewer {
   _pick(e) {
     this._setNDC(e);
     if (this.handles.length) {
-      const hits = this.raycaster.intersectObjects(this.handles, false);
-      if (hits.length) return hits[0].object.userData;
+      const hit = this._handleHit();
+      if (hit) return hit.object.userData;
     }
     // The block under the pointer decides: select the object that built it. The rough pick
     // boxes (footprint × estimated height) are only a fallback where the ray meets no block,
@@ -1218,6 +1264,7 @@ export class Viewer {
       if (this.cb.onMoveBlocks) this.cb.onMoveBlocks(dx, dz);
       return;
     }
+    if (!this._drag && !e.buttons && this.handles.length) this._hoverHandles(e);
     if (this.tool !== 'select') {
       if (this._stroke) { e.stopImmediatePropagation(); this._strokeAt(e); return; }
       this._hoverEvt = e;
@@ -1392,6 +1439,7 @@ export class Viewer {
       this.renderer.domElement.style.cursor = '';
       this._drag = null;
       this._showSnap(null);
+      this._hoverHandles(e);
       this._down = null;
       if (d.changed && this.cb.onCommit) this.cb.onCommit();
       return;
