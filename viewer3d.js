@@ -56,6 +56,65 @@ function shareGeometry(g) {
   return h;
 }
 
+// ---------------------------------------------------------------------------
+// 3D bounds and resizing of objects (pure)
+// ---------------------------------------------------------------------------
+
+/** World-cell bounds of an object: x0..x1, y0..y1, z0..z1 (max exclusive). */
+export function objBounds(type, o) {
+  if (type === 'box' || type === 'fill') return { x0: o.x, x1: o.x + o.w, y0: o.baseY, y1: o.baseY + (type === 'fill' ? o.h : o.wallH), z0: o.z, z1: o.z + o.d };
+  if (type === 'pillar') { const n = o.size || 1; return { x0: o.x, x1: o.x + n, y0: o.baseY, y1: o.baseY + Math.max(1, o.h), z0: o.z, z1: o.z + n }; }
+  return { x0: Math.min(o.x0, o.x1), x1: Math.max(o.x0, o.x1) + 1, y0: o.baseY, y1: o.baseY + Math.max(1, o.h), z0: Math.min(o.z0, o.z1), z1: Math.max(o.z0, o.z1) + 1 };
+}
+
+// Largest size per axis (matches validateDesign).
+const SIZE_MAX = { box: { xz: 512, y: 128 }, fill: { xz: 256, y: 128 }, pillar: { xz: 5, y: 256 }, segment: { xz: 8192, y: 256 } };
+
+/** Which sides of an object can be dragged: a segment only lengthens along its own line. */
+export function resizableSides(type, o) {
+  if (type !== 'segment') return { x: true, y: true, z: true };
+  const alongZ = o.x0 === o.x1 && o.z0 !== o.z1;
+  return { x: !alongZ, y: true, z: alongZ || o.x0 === o.x1 };
+}
+
+/**
+ * Patch for an object after dragging the sides in `sides` ({x,y,z}: -1 min side, 1 max side,
+ * 0/undefined untouched) by `delta` ({x,y,z} blocks). Sizes stay within 1 and the type's
+ * maximum; pillars stay square; `square` (Shift) keeps a box or fill footprint square.
+ */
+export function resizePatch(type, o, sides, delta, square = false) {
+  const b = objBounds(type, o), L = SIZE_MAX[type] || SIZE_MAX.box;
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  for (const a of ['x', 'y', 'z']) {
+    const sd = sides[a];
+    if (!sd) continue;
+    const max = a === 'y' ? L.y : L.xz, dv = delta[a] || 0;
+    if (sd > 0) b[a + '1'] = clamp(b[a + '1'] + dv, b[a + '0'] + 1, b[a + '0'] + max);
+    else b[a + '0'] = clamp(b[a + '0'] + dv, b[a + '1'] - max, b[a + '1'] - 1);
+  }
+  // Square footprints: the dragged side sets the size; the other side grows from its north /
+  // west edge (or toward the dragged corner).
+  if (type === 'pillar' || (square && (type === 'box' || type === 'fill'))) {
+    const w = b.x1 - b.x0, d = b.z1 - b.z0;
+    const n = sides.x && sides.z ? Math.max(w, d) : sides.x ? w : sides.z ? d : null;
+    if (n !== null) {
+      if (sides.x < 0) b.x0 = b.x1 - n; else b.x1 = b.x0 + n;
+      if (sides.z < 0) b.z0 = b.z1 - n; else b.z1 = b.z0 + n;
+    }
+  }
+  const W = b.x1 - b.x0, D = b.z1 - b.z0, H = b.y1 - b.y0;
+  if (type === 'box') return { x: b.x0, z: b.z0, w: W, d: D, baseY: b.y0, wallH: H };
+  if (type === 'fill') return { x: b.x0, z: b.z0, w: W, d: D, baseY: b.y0, h: H };
+  if (type === 'pillar') return { x: b.x0, z: b.z0, size: W, baseY: b.y0, h: H };
+  // segment: keep the direction it was drawn in
+  const fx = o.x0 <= o.x1, fz = o.z0 <= o.z1;
+  return {
+    x0: fx ? b.x0 : b.x1 - 1, x1: fx ? b.x1 - 1 : b.x0,
+    z0: fz ? b.z0 : b.z1 - 1, z1: fz ? b.z1 - 1 : b.z0,
+    baseY: b.y0, h: H,
+  };
+}
+
 /** A three.js geometry over mesher arrays. Its bounding sphere comes from the grid bounds. */
 function toGeometry(a, grid) {
   const g = new THREE.BufferGeometry();
@@ -517,6 +576,7 @@ export class Viewer {
 
   render() {
     if (this._disposed) return;
+    this._scaleNodes();
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -595,8 +655,10 @@ export class Viewer {
   _clearGroup(group) {
     for (const child of [...group.children]) {
       group.remove(child);
-      if (child.geometry) child.geometry.dispose();
-      if (child.material) child.material.dispose(); // shared materials: repeated dispose() is harmless
+      child.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) o.material.dispose(); // shared materials: repeated dispose() is harmless
+      });
     }
   }
 
@@ -630,53 +692,85 @@ export class Viewer {
   _rebuildSelection() {
     this._clearGroup(this.selGroup);
     this.handles = [];
+    this._nodes = [];
     const found = this._findObject(this.selectedId);
     if (!found) return;
     const accent = new THREE.Color(cssVar(this.container, '--accent', '#d9814a'));
     const solid = new THREE.LineBasicMaterial({ color: accent, depthTest: false, transparent: true });
     const { type, obj } = found;
-    if (type === 'box' || type === 'fill') {
-      const E = obj.baseY + (type === 'fill' ? obj.h : obj.wallH);
+    const b = objBounds(type, obj);
+    // The 3D frame: all twelve edges of the bounds.
+    const { x0, x1, y0, y1, z0, z1 } = b;
+    const P = (x, y, z) => new THREE.Vector3(x, y, z);
+    const c = [P(x0, y0, z0), P(x1, y0, z0), P(x1, y0, z1), P(x0, y0, z1), P(x0, y1, z0), P(x1, y1, z0), P(x1, y1, z1), P(x0, y1, z1)];
+    const edges = [0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7].map((k) => c[k]);
+    const frame = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(edges), solid);
+    frame.renderOrder = 10;
+    this.selGroup.add(frame);
+    if (type === 'box') {
       const oh = Math.max(0, (obj.roof && obj.roof.overhang) | 0);
-      // footprint (solid) at baseY and at eave height
-      const l1 = this._rectLine(obj.x, obj.z, obj.x + obj.w, obj.z + obj.d, obj.baseY + 0.02, solid); l1.renderOrder = 10;
-      const l2 = this._rectLine(obj.x, obj.z, obj.x + obj.w, obj.z + obj.d, E + 0.02, solid); l2.renderOrder = 10;
-      this.selGroup.add(l1, l2);
       if (oh) {
         // overhang outline (dashed) at eave height
         const dashed = new THREE.LineDashedMaterial({ color: accent, dashSize: 0.45, gapSize: 0.25, depthTest: false, transparent: true });
-        const l3 = this._rectLine(obj.x - oh, obj.z - oh, obj.x + obj.w + oh, obj.z + obj.d + oh, E + 0.02, dashed, true);
+        const l3 = this._rectLine(x0 - oh, z0 - oh, x1 + oh, z1 + oh, y1 + 0.02, dashed, true);
         l3.renderOrder = 10;
         this.selGroup.add(l3);
       }
-      // 4 resize handles at mid-edges of the top of the footprint
-      const hg = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-      const hm = new THREE.MeshBasicMaterial({ color: accent, depthTest: false, transparent: true, opacity: 0.95 });
-      const mid = { east: [obj.x + obj.w, obj.z + obj.d / 2], west: [obj.x, obj.z + obj.d / 2], south: [obj.x + obj.w / 2, obj.z + obj.d], north: [obj.x + obj.w / 2, obj.z] };
-      for (const dir of DIRS) {
-        const h = new THREE.Mesh(hg, hm);
-        h.position.set(mid[dir][0], E, mid[dir][1]);
-        h.userData = { type: 'handle', dir, id: obj.id, y: E };
-        h.renderOrder = 11;
-        this.selGroup.add(h);
-        this.handles.push(h);
+      this._addRotateHandle(obj, type, x0 - oh, z0 - oh, y1, accent, solid);
+    } else if (type === 'fill') this._addRotateHandle(obj, type, x0, z0, y1, accent, solid);
+    else if (type === 'segment') this._addRotateHandle(obj, 'segment', x0, z0, y1, accent, solid);
+    this._addNodes(obj, type, b, accent);
+    this._addMoveGizmo(obj, (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+  }
+
+  /**
+   * Resize nodes on the 3D frame: a cube on each face (drags that face along its axis: the
+   * top and bottom change the height) and a ball on each corner (drags two sides at once, flat).
+   * Nodes keep the same size on screen however far the camera is.
+   */
+  _addNodes(obj, type, b, accent) {
+    const ok = resizableSides(type, obj);
+    const faceGeo = new THREE.BoxGeometry(1, 1, 1), cornerGeo = new THREE.SphereGeometry(0.62, 16, 10);
+    const mat = new THREE.MeshBasicMaterial({ color: accent, depthTest: false, transparent: true, opacity: 0.95 });
+    const rim = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.95 });
+    const mid = { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2, z: (b.z0 + b.z1) / 2 };
+    const add = (geo, pos, data) => {
+      const g = new THREE.Group();
+      g.position.set(pos[0], pos[1], pos[2]);
+      const back = new THREE.Mesh(geo, rim); back.scale.setScalar(1.35); back.renderOrder = 11;
+      const front = new THREE.Mesh(geo, mat); front.renderOrder = 12;
+      front.userData = { ...data, id: obj.id, pos };
+      g.add(back, front);
+      g.userData.node = true;
+      this.selGroup.add(g);
+      this.handles.push(front);
+      this._nodes.push(g);
+    };
+    this._nodes = [];
+    for (const a of ['x', 'y', 'z']) {
+      if (!ok[a]) continue;
+      for (const sign of [-1, 1]) {
+        const pos = [mid.x, mid.y, mid.z];
+        pos['xyz'.indexOf(a)] = sign < 0 ? b[a + '0'] : b[a + '1'];
+        add(faceGeo, pos, { type: 'face', axis: a, sides: { [a]: sign } });
       }
-      this._addRotateHandle(obj, type, obj.x - oh, obj.z - oh, E, accent, solid);
-      this._addMoveGizmo(obj, obj.x + obj.w / 2, (obj.baseY + E) / 2, obj.z + obj.d / 2);
-    } else if (type === 'pillar') {
-      const n = obj.size || 1;
-      const l = this._rectLine(obj.x, obj.z, obj.x + n, obj.z + n, obj.baseY + 0.02, solid); l.renderOrder = 10;
-      const t = this._rectLine(obj.x, obj.z, obj.x + n, obj.z + n, obj.baseY + Math.max(1, obj.h) + 0.02, solid); t.renderOrder = 10;
-      this.selGroup.add(l, t);
-      this._addMoveGizmo(obj, obj.x + n / 2, obj.baseY + Math.max(1, obj.h) / 2, obj.z + n / 2);
-    } else if (type === 'segment') {
-      const x0 = Math.min(obj.x0, obj.x1), x1 = Math.max(obj.x0, obj.x1) + 1;
-      const z0 = Math.min(obj.z0, obj.z1), z1 = Math.max(obj.z0, obj.z1) + 1;
-      const l = this._rectLine(x0, z0, x1, z1, obj.baseY + 0.02, solid); l.renderOrder = 10;
-      const t = this._rectLine(x0, z0, x1, z1, obj.baseY + Math.max(1, obj.h) + 0.02, solid); t.renderOrder = 10;
-      this.selGroup.add(l, t);
-      this._addRotateHandle(obj, 'segment', x0, z0, obj.baseY + Math.max(1, obj.h), accent, solid);
-      this._addMoveGizmo(obj, (x0 + x1) / 2, obj.baseY + Math.max(1, obj.h) / 2, (z0 + z1) / 2);
+    }
+    if (ok.x && ok.z) {
+      for (const sy of [-1, 1]) for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        const y = sy < 0 ? b.y0 : b.y1;
+        add(cornerGeo, [sx < 0 ? b.x0 : b.x1, y, sz < 0 ? b.z0 : b.z1], { type: 'handle', y, sides: { x: sx, z: sz } });
+      }
+    }
+    this._scaleNodes();
+  }
+
+  /** Keep resize nodes a steady size on screen. */
+  _scaleNodes() {
+    if (!this._nodes) return;
+    for (const g of this._nodes) {
+      const dist = this.camera.position.distanceTo(g.position);
+      g.scale.setScalar(Math.max(0.25, dist * 0.012));
+      g.updateMatrixWorld(true); // so picking matches before the next frame is drawn
     }
   }
 
@@ -851,12 +945,12 @@ export class Viewer {
       return;
     }
     const hit = this._pick(e);
-    if (hit && hit.type === 'axis') {
+    if (hit && (hit.type === 'axis' || hit.type === 'face')) {
       const found = this._findObject(hit.id);
       if (!found) return;
       e.stopImmediatePropagation();
       e.preventDefault();
-      const d = { mode: 'axis', axis: hit.axis, origin: hit.origin, id: hit.id, objType: found.type, start: { ...found.obj }, last: 0, changed: false, pointerId: e.pointerId };
+      const d = { mode: hit.type, axis: hit.axis, origin: hit.origin || hit.pos, sides: hit.sides, id: hit.id, objType: found.type, start: JSON.parse(JSON.stringify(found.obj)), last: 0, changed: false, pointerId: e.pointerId };
       d.t0 = this._axisParam(e, d);
       if (d.t0 == null) return;
       this._down = { x: e.clientX, y: e.clientY, hit };
@@ -910,7 +1004,7 @@ export class Viewer {
 
     this._drag = {
       mode: hit.type === 'handle' ? 'resize' : hit.type === 'rotate' ? 'rotate' : 'move',
-      dir: hit.dir, id: hit.id, objType: found.type,
+      dir: hit.dir, sides: hit.sides, id: hit.id, objType: found.type,
       start: { ...found.obj }, planeY, p0, lastDx: 0, lastDz: 0, changed: false, pointerId: e.pointerId,
     };
     if (hit.type === 'rotate') {
@@ -1007,6 +1101,17 @@ export class Viewer {
     const d = this._drag;
     if (!d) return;
     e.stopImmediatePropagation();
+    if (d.mode === 'face') {
+      const t = this._axisParam(e, d);
+      if (t == null) return;
+      const n = Math.round(t - d.t0);
+      if (n === d.last && !!e.shiftKey === !!d.lastShift) return;
+      d.last = n; d.lastShift = e.shiftKey;
+      d.changed = true;
+      const patch = resizePatch(d.objType, d.start, d.sides, { [d.axis]: n }, e.shiftKey);
+      if (this.cb.onResize) this.cb.onResize(d.id, patch);
+      return;
+    }
     if (d.mode === 'axis') {
       const t = this._axisParam(e, d);
       if (t == null) return;
@@ -1046,21 +1151,9 @@ export class Viewer {
       else patch = { x: s.x + dx, z: s.z + dz };
       if (this.cb.onMove) this.cb.onMove(d.id, patch);
     } else {
-      let { x, z, w, d: dd } = s;
-      switch (d.dir) {
-        case 'east': w = Math.max(1, s.w + dx); break;
-        case 'west': { const nx = Math.min(s.x + dx, s.x + s.w - 1); w = s.x + s.w - nx; x = nx; break; }
-        case 'south': dd = Math.max(1, s.d + dz); break;
-        case 'north': { const nz = Math.min(s.z + dz, s.z + s.d - 1); dd = s.z + s.d - nz; z = nz; break; }
-      }
-      // Shift: keep the footprint square. The side being dragged sets the size; the other
-      // axis grows from its north / west edge.
-      if (e.shiftKey && (d.objType === 'box' || d.objType === 'fill')) {
-        if (d.dir === 'east' || d.dir === 'west') dd = w; else w = dd;
-        z = d.dir === 'north' ? z : s.z;
-        x = d.dir === 'west' ? x : s.x;
-      }
-      if (this.cb.onResize) this.cb.onResize(d.id, { x, z, w, d: dd });
+      // Corner node: two sides at once, on the flat. Shift keeps a footprint square.
+      const patch = resizePatch(d.objType, s, d.sides, { x: dx, z: dz }, e.shiftKey);
+      if (this.cb.onResize) this.cb.onResize(d.id, patch);
     }
   }
 

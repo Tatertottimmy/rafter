@@ -59,7 +59,9 @@ No build step is needed to develop: serve the folder with any static web server
 ## Using it
 
 - **Boxes** are footprints. Click one in the list or in the 3D view, drag it to move, drag the
-  edge handles to resize (hold Shift to keep it square), drag the round corner handle to rotate in
+  nodes on its 3D frame to resize (faces move one side, including the top and bottom for height;
+  corners move two sides; hold Shift to keep it square; works for boxes, fills, pillars and wall
+  segments), drag the round knob to rotate in
   90° steps (or press R / Shift+R, or the Rotate button), or type exact numbers in Properties. Wall
   segments rotate too.
 - **Move arrows**: a selected box, pillar or wall segment shows red (x), green (up/down) and blue (z)

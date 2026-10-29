@@ -259,6 +259,24 @@ test('meshGrid keeps only visible faces; covered tops become caps', () => {
   assert.equal(quads(stairs), 2 * 12 - 4);
 });
 
+test('resizePatch drags any side of an object in 3D, within limits', () => {
+  const box = { x: 0, z: 0, w: 5, d: 4, baseY: 2, wallH: 4 };
+  assert.deepEqual(V.resizePatch('box', box, { y: 1 }, { y: 3 }), { x: 0, z: 0, w: 5, d: 4, baseY: 2, wallH: 7 }, 'top up');
+  assert.deepEqual(V.resizePatch('box', box, { y: -1 }, { y: -2 }), { x: 0, z: 0, w: 5, d: 4, baseY: 0, wallH: 6 }, 'bottom down, top stays');
+  assert.deepEqual(V.resizePatch('box', box, { y: -1 }, { y: 10 }), { x: 0, z: 0, w: 5, d: 4, baseY: 5, wallH: 1 }, 'never below 1 tall');
+  assert.deepEqual(V.resizePatch('box', box, { x: -1, z: 1 }, { x: -2, z: 3 }), { x: -2, z: 0, w: 7, d: 7, baseY: 2, wallH: 4 }, 'corner');
+  assert.deepEqual(V.resizePatch('box', box, { x: 1 }, { x: 2 }, true), { x: 0, z: 0, w: 7, d: 7, baseY: 2, wallH: 4 }, 'shift: square');
+  const fill = { x: 1, z: 1, w: 3, d: 3, baseY: 0, h: 1 };
+  assert.deepEqual(V.resizePatch('fill', fill, { y: 1 }, { y: 200 }), { x: 1, z: 1, w: 3, d: 3, baseY: 0, h: 128 }, 'fill height capped');
+  const pillar = { x: 0, z: 0, size: 1, baseY: 0, h: 3 };
+  assert.deepEqual(V.resizePatch('pillar', pillar, { x: 1 }, { x: 2 }), { x: 0, z: 0, size: 3, baseY: 0, h: 3 }, 'pillar stays square');
+  assert.deepEqual(V.resizePatch('pillar', pillar, { x: 1 }, { x: 20 }), { x: 0, z: 0, size: 5, baseY: 0, h: 3 }, 'pillar max 5');
+  const seg = { x0: 6, z0: 2, x1: 2, z1: 2, baseY: 0, h: 3 }; // drawn east to west
+  assert.deepEqual(V.resizePatch('segment', seg, { x: 1 }, { x: 2 }), { x0: 8, x1: 2, z0: 2, z1: 2, baseY: 0, h: 3 });
+  assert.deepEqual(V.resizableSides('segment', seg), { x: true, y: true, z: false });
+  assert.deepEqual(V.objBounds('fill', fill), { x0: 1, x1: 4, y0: 0, y1: 1, z0: 1, z1: 4 });
+});
+
 if (haveBlocks) {
   test('blocks.js: every family pattern is a known pattern name', async () => {
     const { FAMILIES } = await import('../blocks.js');
