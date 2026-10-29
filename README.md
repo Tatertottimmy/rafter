@@ -58,6 +58,10 @@ No build step is needed to develop: serve the folder with any static web server
 
 ## Using it
 
+- **Snap** (on by default, top of the 3D view): while you drag out an area or move an object it
+  snaps to the centres, corners and edge middles of the other objects, with a ring marking the
+  point. Ctrl+drag an area to draw it out from the centre, so a circle started on a roof's centre
+  stays centred on it.
 - **Boxes** are footprints. Click one in the list or in the 3D view, drag it to move, drag the
   nodes on its 3D frame to resize (faces move one side, including the top and bottom for height;
   corners move two sides; hold Shift to keep it square; works for boxes, fills, pillars and wall

@@ -115,6 +115,54 @@ export function resizePatch(type, o, sides, delta, square = false) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Snapping (pure)
+// ---------------------------------------------------------------------------
+
+/**
+ * Snap points of every object in the design (on the ground plan, world x/z): its centre, its
+ * corners and the middles of its edges. `excludeId` leaves out the object being moved.
+ */
+export function snapTargets(design, excludeId = null) {
+  const out = [];
+  const add = (type, o) => {
+    if (!o || o.id === excludeId) return;
+    const b = objBounds(type, o);
+    const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
+    out.push({ x: cx, z: cz, kind: 'center', id: o.id });
+    for (const x of [b.x0, b.x1]) for (const z of [b.z0, b.z1]) out.push({ x, z, kind: 'corner', id: o.id });
+    out.push({ x: cx, z: b.z0, kind: 'mid', id: o.id }, { x: cx, z: b.z1, kind: 'mid', id: o.id }, { x: b.x0, z: cz, kind: 'mid', id: o.id }, { x: b.x1, z: cz, kind: 'mid', id: o.id });
+  };
+  for (const b of (design && design.boxes) || []) add('box', b);
+  for (const f of (design && design.fills) || []) add('fill', f);
+  for (const p of (design && design.pillars) || []) add('pillar', p);
+  for (const sg of (design && design.segments) || []) add('segment', sg);
+  return out;
+}
+
+/** The target nearest (x, z) within distance r (optionally of the given kinds), or null. */
+export function nearestSnap(targets, x, z, r, kinds = null) {
+  let best = null, bd = r * r;
+  for (const t of targets) {
+    if (kinds && !kinds.includes(t.kind)) continue;
+    const d = (t.x - x) ** 2 + (t.z - z) ** 2;
+    if (d <= bd) { bd = d; best = t; }
+  }
+  return best;
+}
+
+/**
+ * Cells [lo, hi] (inclusive) of one axis of a rectangle drawn out from centre c (a cell
+ * boundary x.0 or a cell centre x.5) to the pointer at p: centred exactly on c, at least one
+ * cell (x.5) or two cells (x.0) across.
+ */
+export function centreSpan(c, p) {
+  const half = Math.abs(p - c);
+  const odd = Math.abs(c - Math.floor(c) - 0.5) < 1e-6;
+  const h = odd ? Math.floor(half) + 0.5 : Math.max(1, Math.round(half));
+  return [Math.round(c - h), Math.round(c + h) - 1];
+}
+
 /** A three.js geometry over mesher arrays. Its bounding sphere comes from the grid bounds. */
 function toGeometry(a, grid) {
   const g = new THREE.BufferGeometry();
@@ -194,7 +242,9 @@ export class Viewer {
     this.toolOpts = {};
     this._hoverGroup = new THREE.Group();
     this._blockSelGroup = new THREE.Group(); // outlines of selected hand-placed blocks
-    this.scene.add(this._hoverGroup, this._blockSelGroup);
+    this._snapGroup = new THREE.Group();     // marker on the point a drag has snapped to
+    this.scene.add(this._hoverGroup, this._blockSelGroup, this._snapGroup);
+    this.snap = true;
     this._hoverKey = null;
     this._hoverEvt = null;
     this._hoverRaf = 0;
@@ -316,6 +366,7 @@ export class Viewer {
   setTool(tool, opts = {}) {
     this.tool = tool || 'select';
     this.toolOpts = opts || {};
+    this._showSnap(null);
     this.renderer.domElement.style.cursor = this.tool === 'select' ? '' : 'crosshair';
     this._hoverKey = '';  // differs from every real key, so the old preview is always cleared
     this._setHover(this._hoverEvt && this.tool !== 'select' ? this.pickBlock(this._hoverEvt) : null);
@@ -462,9 +513,10 @@ export class Viewer {
     this._hoverKey = null;
     this._clearGroup(this._hoverGroup);
     if (a) {
-      const x0 = Math.min(a.anchor[0], a.cur[0]), x1 = Math.max(a.anchor[0], a.cur[0]) + 1;
-      const y0 = Math.min(a.anchor[1], a.cur[1]), y1 = Math.max(a.anchor[1], a.cur[1]) + 1;
-      const z0 = Math.min(a.anchor[2], a.cur[2]), z1 = Math.max(a.anchor[2], a.cur[2]) + 1;
+      const A = a.a || a.anchor;
+      const x0 = Math.min(A[0], a.cur[0]), x1 = Math.max(A[0], a.cur[0]) + 1;
+      const y0 = Math.min(A[1], a.cur[1]), y1 = Math.max(A[1], a.cur[1]) + 1;
+      const z0 = Math.min(A[2], a.cur[2]), z1 = Math.max(A[2], a.cur[2]) + 1;
       const color = new THREE.Color(this.tool === 'erase' ? cssVar(this.container, '--danger', '#c0392b') : cssVar(this.container, '--accent', '#d9814a'));
       // Circle mode on a layer: the oval that fits the rectangle.
       const round = this.toolOpts && this.toolOpts.circle && a.wallAxis === null;
@@ -507,6 +559,43 @@ export class Viewer {
     this.selectedId = id ?? null;
     this._rebuildSelection();
     this.requestRender();
+  }
+
+  /** Snap to the centres, corners and edge middles of objects while placing and moving. */
+  setSnap(on) {
+    this.snap = !!on;
+    if (!this.snap) this._showSnap(null);
+  }
+
+  /** How close (world blocks) the pointer must come to a snap point: steady on screen. */
+  _snapRadius(x, y, z) {
+    return Math.max(0.8, this.camera.position.distanceTo(new THREE.Vector3(x, y, z)) * 0.05);
+  }
+
+  /** Mark the snap point t ({x, z}) at height y, or clear the mark. */
+  _showSnap(t, y = 0) {
+    this._clearGroup(this._snapGroup);
+    if (t) {
+      const r = this._snapRadius(t.x, y, t.z) * 0.55;
+      const color = new THREE.Color(cssVar(this.container, '--accent', '#d9814a'));
+      const ring = new THREE.Mesh(new THREE.RingGeometry(r * 0.7, r, 32), new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.95, side: THREE.DoubleSide }));
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(t.x, y + 0.03, t.z);
+      ring.renderOrder = 22;
+      const pts = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([a, b]) => new THREE.Vector3(t.x + a * r * 1.6, y + 0.03, t.z + b * r * 1.6));
+      const cross = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true }));
+      cross.renderOrder = 22;
+      this._snapGroup.add(ring, cross);
+    }
+    this.requestRender();
+  }
+
+  /** Snap point near the pointer on the layer y (for placing), or null. */
+  _snapAt(e, y) {
+    if (!this.snap || !this.design) return null;
+    const p = this._planePoint(e, y);
+    if (!p) return null;
+    return nearestSnap(snapTargets(this.design), p.x, p.z, this._snapRadius(p.x, y, p.z));
   }
 
   setSliceY(yMax) {
@@ -928,7 +1017,12 @@ export class Viewer {
           const vertical = !info.ground && n[1] === 0 && (n[0] !== 0 || n[2] !== 0);
           const wallAxis = vertical ? (n[0] !== 0 ? 0 : 2) : null; // the coordinate that stays fixed
           const planeY = this.tool === 'place' ? anchor[1] : anchor[1] + 1;
-          this._area = { anchor, cur: anchor, y: anchor[1], planeY, wallAxis, info, alt: e.altKey, pointerId: e.pointerId };
+          this._area = { anchor, a: anchor, cur: anchor, y: anchor[1], planeY, wallAxis, info, alt: e.altKey, pointerId: e.pointerId };
+          // Started on a snap point (a roof's centre, a corner, ...): draw from exactly there.
+          if (wallAxis === null) {
+            const t = this._snapAt(e, planeY);
+            if (t) { this._area.snap0 = t; this._showSnap(t, planeY); }
+          }
           this._setAreaPreview(this._area);
           return;
         }
@@ -1061,15 +1155,37 @@ export class Viewer {
       } else {
         const p = this._planePoint(e, ar.planeY);
         if (!p) return;
-        cur = [Math.floor(p.x), ar.y, Math.floor(p.z)];
-        if (e.shiftKey) {
-          // Shift: a square (or a round circle), sized by the longer side.
-          const dx = cur[0] - ar.anchor[0], dz = cur[2] - ar.anchor[2], m = Math.max(Math.abs(dx), Math.abs(dz));
-          cur[0] = ar.anchor[0] + (dx < 0 ? -m : m);
-          cur[2] = ar.anchor[2] + (dz < 0 ? -m : m);
+        let px = p.x, pz = p.z;
+        // The far corner snaps too (unless drawing from the centre: the size is free then).
+        const centre = e.ctrlKey || e.metaKey;
+        const t = !centre && this.snap ? nearestSnap(snapTargets(this.design), px, pz, this._snapRadius(px, ar.planeY, pz)) : null;
+        if (t) { px = t.x; pz = t.z; }
+        this._showSnap(t || ar.snap0 || null, ar.planeY);
+        if (centre) {
+          // Ctrl: out from the centre (the snap point it started on, else the start cell).
+          const cx = ar.snap0 ? ar.snap0.x : ar.anchor[0] + 0.5, cz = ar.snap0 ? ar.snap0.z : ar.anchor[2] + 0.5;
+          let ex = px, ez = pz;
+          if (e.shiftKey) { const m = Math.max(Math.abs(px - cx), Math.abs(pz - cz)); ex = cx + m; ez = cz + m; }
+          const [x0, x1] = centreSpan(cx, ex), [z0, z1] = centreSpan(cz, ez);
+          ar.a = [x0, ar.y, z0];
+          cur = [x1, ar.y, z1];
+        } else {
+          // From the start; a snap point on a cell edge starts on the side the drag goes.
+          const side = (c, q) => (Math.abs(c - Math.floor(c) - 0.5) < 1e-6 ? Math.floor(c) : q >= c ? c : c - 1);
+          const a = ar.snap0 ? [side(ar.snap0.x, px), ar.y, side(ar.snap0.z, pz)] : ar.anchor;
+          ar.a = a;
+          const end = (c, from) => (Math.abs(c - Math.floor(c) - 0.5) < 1e-6 ? Math.floor(c) : from < c ? c - 1 : c);
+          cur = t ? [end(px, a[0]), ar.y, end(pz, a[2])] : [Math.floor(px), ar.y, Math.floor(pz)];
+          if (e.shiftKey) {
+            // Shift: a square (or a round circle), sized by the longer side.
+            const dx = cur[0] - a[0], dz = cur[2] - a[2], m = Math.max(Math.abs(dx), Math.abs(dz));
+            cur[0] = a[0] + (dx < 0 ? -m : m);
+            cur[2] = a[2] + (dz < 0 ? -m : m);
+          }
         }
       }
-      if (cur[0] === ar.cur[0] && cur[1] === ar.cur[1] && cur[2] === ar.cur[2]) return;
+      if (cur[0] === ar.cur[0] && cur[1] === ar.cur[1] && cur[2] === ar.cur[2] && !ar.moved) return;
+      ar.moved = true;
       ar.cur = cur;
       this._setAreaPreview(ar);
       return;
@@ -1093,7 +1209,15 @@ export class Viewer {
         // Hover preview, at most once per frame.
         this._hoverRaf = requestAnimationFrame(() => {
           this._hoverRaf = 0;
-          if (this.tool !== 'select' && this._hoverEvt) this._setHover(this.pickBlock(this._hoverEvt));
+          if (this.tool !== 'select' && this._hoverEvt) {
+            const info = this.pickBlock(this._hoverEvt);
+            this._setHover(info);
+            // Area mode: show the snap point a drag would start from.
+            const y = info && (this.tool === 'place' ? info.place : info.cell);
+            const n = info && info.normal;
+            const flat = info && (info.ground || !n || n[1] !== 0);
+            this._showSnap(this._areaMode() && y && flat ? this._snapAt(this._hoverEvt, this.tool === 'place' ? y[1] : y[1] + 1) : null, y ? (this.tool === 'place' ? y[1] : y[1] + 1) : 0);
+          }
         });
       }
       return;
@@ -1140,7 +1264,22 @@ export class Viewer {
       if (this.cb.onRotate) this.cb.onRotate(d.id, { ...d.start, ...rotatePatch(d.objType, d.start, q) });
       return;
     }
-    const dx = Math.round(p.x - d.p0.x), dz = Math.round(p.z - d.p0.z);
+    let dx = Math.round(p.x - d.p0.x), dz = Math.round(p.z - d.p0.z);
+    if (d.mode === 'move' && this.snap) {
+      // Snap the object's centre to another's centre or edge middle, or a corner to a corner.
+      if (!d.targets) d.targets = snapTargets(this.design, d.id);
+      const b = objBounds(d.objType, d.start);
+      const r = this._snapRadius(p.x, d.planeY, p.z);
+      const anchors = [[(b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2, ['center', 'mid']]];
+      for (const x of [b.x0, b.x1]) for (const z of [b.z0, b.z1]) anchors.push([x, z, ['corner']]);
+      let best = null;
+      for (const [ax, az, kinds] of anchors) {
+        const t = nearestSnap(d.targets, ax + dx, az + dz, r, kinds);
+        if (t) { const dist = (t.x - ax - dx) ** 2 + (t.z - az - dz) ** 2; if (!best || dist < best.dist) best = { t, dist, ax, az }; }
+      }
+      if (best) { dx = Math.round(best.t.x - best.ax); dz = Math.round(best.t.z - best.az); }
+      this._showSnap(best ? best.t : null, d.planeY);
+    }
     if (dx === d.lastDx && dz === d.lastDz && !!e.shiftKey === !!d.lastShift) return;
     d.lastDx = dx; d.lastDz = dz; d.lastShift = e.shiftKey;
     d.changed = true;
@@ -1189,11 +1328,13 @@ export class Viewer {
       this._down = null;
       this.controls.enabled = true;
       this._setAreaPreview(null);
+      this._showSnap(null);
       if (e.type !== 'pointerup') return;
-      const same = ar.cur[0] === ar.anchor[0] && ar.cur[1] === ar.anchor[1] && ar.cur[2] === ar.anchor[2];
+      const A = ar.a || ar.anchor;
+      const same = ar.cur[0] === A[0] && ar.cur[1] === A[1] && ar.cur[2] === A[2];
       if (same) { if (this.cb.onBlockClick) this.cb.onBlockClick(ar.info, { alt: ar.alt, shift: false }); }
       else if (this.cb.onArea) {
-        const [ax, ay, az] = ar.anchor, [bx, by, bz] = ar.cur;
+        const [ax, ay, az] = A, [bx, by, bz] = ar.cur;
         this.cb.onArea({ x0: ax, y0: ay, z0: az, x1: bx, y1: by, z1: bz }, ar.info);
       }
       return;
@@ -1234,6 +1375,7 @@ export class Viewer {
       this.controls.enabled = true;
       this.renderer.domElement.style.cursor = '';
       this._drag = null;
+      this._showSnap(null);
       this._down = null;
       if (d.changed && this.cb.onCommit) this.cb.onCommit();
       return;

@@ -373,6 +373,7 @@ async function initViewer() {
     viewer.setDesign(state.design);
     viewer.setGrid(state.grid);
     viewer.setTool(state.tool, toolOpts());
+    viewer.setSnap($('snapToggle').checked);
     viewer.setSelection(state.selectedId);
     applySlice();
     viewer.frameAll();
@@ -1124,7 +1125,7 @@ const TOOL_HINTS = {
 };
 const AREA_HINTS = {
   paint: 'Drag a rectangle to repaint every block on that layer · click for one block · right-drag to orbit',
-  place: 'Drag a rectangle (Shift = square) to make a fill (one object you can move and resize later) · click for one block · Alt+drag selects · right-drag to orbit',
+  place: 'Drag a rectangle (Shift = square) to make a fill (one object you can move and resize later); Ctrl+drag draws it out from the centre, and it snaps to the centres and corners of objects · click for one block · Alt+drag selects · right-drag to orbit',
   erase: 'Drag a rectangle to clear every block on that layer · click for one block · right-drag to orbit',
 };
 const AREA_MAX = 128 * 128;
@@ -2124,6 +2125,10 @@ function wire() {
 
   $('sliceSlider').addEventListener('input', (e) => setLayer(Number(e.target.value)));
   $('sliceToggle').addEventListener('change', (e) => { state.sliceOn = e.target.checked; applySlice(); });
+  $('snapToggle').addEventListener('change', (e) => {
+    try { localStorage.setItem('rafter.snap', e.target.checked ? '1' : '0'); } catch (err) { /* ignore */ }
+    if (viewer) viewer.setSnap(e.target.checked);
+  });
   $('btnFrame').addEventListener('click', () => { if (viewer) viewer.frameAll(); });
   $('layerDown').addEventListener('click', () => setLayer(state.currentLayer - 1));
   $('layerUp').addEventListener('click', () => setLayer(state.currentLayer + 1));
@@ -2162,6 +2167,7 @@ function wire() {
   $('planCanvas').addEventListener('pointerup', onPlanUp);
   $('planCanvas').addEventListener('pointercancel', () => { planDrag = null; renderPlan(); });
   for (const b of $('areaSeg').querySelectorAll('button')) b.addEventListener('click', () => setArea(b.dataset.area));
+  try { if (localStorage.getItem('rafter.snap') === '0') $('snapToggle').checked = false; } catch (e) { /* ignore */ }
   try { const a = localStorage.getItem('rafter.area'); state.area = a === '1' || a === 'circle'; state.circle = a === 'circle'; } catch (e) { /* ignore */ }
   try { const b = localStorage.getItem('rafter.brush'); if (b && FAMILIES[b]) state.brush = b; } catch (e) { /* ignore */ }
   updateToolbar();

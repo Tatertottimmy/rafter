@@ -277,6 +277,21 @@ test('resizePatch drags any side of an object in 3D, within limits', () => {
   assert.deepEqual(V.objBounds('fill', fill), { x0: 1, x1: 4, y0: 0, y1: 1, z0: 1, z1: 4 });
 });
 
+test('snap points and centre-out spans', () => {
+  const design = { boxes: [{ id: 'b1', x: 0, z: 0, w: 10, d: 7, baseY: 0, wallH: 4 }], fills: [{ id: 'f1', x: 20, z: 0, w: 3, d: 3, baseY: 0, h: 1 }] };
+  const t = V.snapTargets(design);
+  assert.ok(t.some((p) => p.kind === 'center' && p.x === 5 && p.z === 3.5 && p.id === 'b1'));
+  assert.equal(t.filter((p) => p.id === 'b1').length, 9);
+  assert.equal(V.snapTargets(design, 'b1').some((p) => p.id === 'b1'), false);
+  assert.equal(V.nearestSnap(t, 5.4, 3.2, 1).kind, 'center');
+  assert.equal(V.nearestSnap(t, 5.4, 3.2, 1, ['corner']), null);
+  // centre on a cell boundary (even sizes) and on a cell centre (odd sizes)
+  assert.deepEqual(V.centreSpan(5, 7.3), [3, 6]);      // 4 cells around x = 5
+  assert.deepEqual(V.centreSpan(3.5, 6.2), [1, 5]);    // 5 cells around cell 3
+  assert.deepEqual(V.centreSpan(3.5, 3.6), [3, 3]);    // just the centre cell
+  assert.deepEqual(V.centreSpan(5, 5.1), [4, 5]);      // smallest even span
+});
+
 if (haveBlocks) {
   test('blocks.js: every family pattern is a known pattern name', async () => {
     const { FAMILIES } = await import('../blocks.js');
