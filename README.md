@@ -60,6 +60,8 @@ No build step is needed to develop: serve the folder with any static web server
 
 - **Texture** (box properties): walls and roofs can mix in up to six other blocks. Set how many
   with "Wall/Roof mix blocks", then pick each one, or leave a slot on Auto for a look-alike.
+  With the Grime pattern the mixes are layered by height: mix 1 highest, the last mix lowest,
+  blending into each other rather than meeting in lines.
 - **Scale…** (Objects panel) makes the whole build, or just the selected object, bigger or
   smaller by any factor (×½ to ×8). Edges scale about the build's centre at ground level, so
   shared walls stay shared, gaps grow in proportion and roofs keep their pitch; overhangs,

@@ -1303,14 +1303,25 @@ export function buildGrid(input) {
       const mix = mixes[blk.path];
       if (!mix || !mix.length) continue;
       const { x, y, z } = blk;
-      const v = blk.path === 'roof.material'
-        ? variationValue(va.style, va.seed, x, y, z, E - 1, roofTop) // roofs weather from the eaves up
-        : variationValue(va.style, va.seed, x, y, z, b.baseY, E);
+      const roof = blk.path === 'roof.material';
+      const lo = roof ? E - 1 : b.baseY, hi = roof ? roofTop : E; // roofs weather from the eaves up
+      const v = variationValue(va.style, va.seed, x, y, z, lo, hi);
       if (v >= amount[blk.path]) continue;
-      // Several mixes: share the hits out between them with an independent hash. (With two,
-      // the low half goes to the second, as it always has.)
-      const h = Math.min(mix.length - 1, Math.floor(hash3(x, y, z, va.seed + 7) * mix.length));
-      const m = mix[mix.length === 2 ? 1 - h : h];
+      let m;
+      if (va.style === 'grime' && mix.length > 1) {
+        // Grime: the mixes are layered by height, mix 1 highest and the last lowest. Noise
+        // and a per-block jitter blur each boundary over a couple of blocks, so the layers
+        // dither into each other instead of meeting in straight lines.
+        const up = Math.min(1, Math.max(0, (y - lo) / Math.max(1, hi - lo)));
+        const jitter = (valueNoise(x, y, z, va.seed + 19, 2.2) - 0.5) * 1.5 + (hash3(x, y, z, va.seed + 23) - 0.5) * 0.9;
+        const p = (1 - up) * (mix.length - 1) + jitter;
+        m = mix[Math.min(mix.length - 1, Math.max(0, Math.round(p)))];
+      } else {
+        // Several mixes: share the hits out between them with an independent hash. (With two,
+        // the low half goes to the second, as it always has.)
+        const h = Math.min(mix.length - 1, Math.floor(hash3(x, y, z, va.seed + 7) * mix.length));
+        m = mix[mix.length === 2 ? 1 - h : h];
+      }
       const nb = reskin(blk, m);
       if (nb) blocks.set(key, nb);
     }

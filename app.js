@@ -728,7 +728,7 @@ const DET = (k) => (o) => !!(o.details && o.details[k]);
 const FILL_SHAPE_OPTIONS = [['full', 'Full blocks'], ['slab', 'Slabs'], ['stair', 'Stairs'], ['pane', 'Panes / bars']];
 const PILLAR_TRIM = [['none', 'None'], ['block', 'Block ring'], ['stairs', 'Stair ring'], ['slab', 'Slab ring']];
 const VAR = (k) => (o) => !!(o.variation && o.variation[k] > 0);
-const STYLE_OPTIONS = [['patches', 'Patches'], ['scatter', 'Scatter'], ['grime', 'Grime (heavier low down)'], ['streaks', 'Streaks (drip marks)']];
+const STYLE_OPTIONS = [['patches', 'Patches'], ['scatter', 'Scatter'], ['grime', 'Grime (heavier low down; mix 1 highest, last mix lowest)'], ['streaks', 'Streaks (drip marks)']];
 // What an Auto mix slot will use: the same pick as the engine (chosen slots first, then the
 // next look-alikes in order).
 const autoMix = (surface, from, i) => (o) => {
