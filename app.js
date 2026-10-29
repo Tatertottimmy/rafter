@@ -494,7 +494,7 @@ function paletteUses(scopeId = null) {
   };
   for (const b of d.boxes) {
     if (!inScope(b)) continue;
-    const det = b.details || {}, r = b.roof, va = b.variation || {};
+    const det = b.details || {}, r = b.roof, va = texOf(b);
     add(r.material, 'Roof', 'stairs', b.id, (t) => { r.material = t; });
     add(b.wallMaterial, 'Walls', null, b.id, (t) => { b.wallMaterial = t; });
     if (det.trim || det.ridge) add(det.trimMat, 'Trim & ridge', 'stairs', b.id, (t) => { det.trimMat = t; });
@@ -727,12 +727,24 @@ const ROOF_SHOW = {
 const DET = (k) => (o) => !!(o.details && o.details[k]);
 const FILL_SHAPE_OPTIONS = [['full', 'Full blocks'], ['slab', 'Slabs'], ['stair', 'Stairs'], ['pane', 'Panes / bars']];
 const PILLAR_TRIM = [['none', 'None'], ['block', 'Block ring'], ['stairs', 'Stair ring'], ['slab', 'Slab ring']];
-const VAR = (k) => (o) => !!(o.variation && o.variation[k] > 0);
+/** The texture settings a box follows: the design's shared ones, or its own. */
+function texOf(o) {
+  if (o && o.roof && !o.ownTexture && state.design && state.design.variation) return state.design.variation;
+  return (o && o.variation) || {};
+}
+const VAR = (k) => (o) => texOf(o)[k] > 0;
+// With Grime the mixes are layered by height: say which end is which.
+const mixLabel = (surface, i) => (o) => {
+  const va = texOf(o), n = va[surface + 'MixCount'] || 2;
+  const base = (surface === 'wall' ? 'Wall mix ' : 'Roof mix ') + (i + 1);
+  if (va.style !== 'grime' || n < 2) return base;
+  return base + (i === 0 ? ' (Top)' : i === n - 1 ? ' (Bottom)' : '');
+};
 const STYLE_OPTIONS = [['patches', 'Patches'], ['scatter', 'Scatter'], ['grime', 'Grime (heavier low down; mix 1 highest, last mix lowest)'], ['streaks', 'Streaks (drip marks)']];
 // What an Auto mix slot will use: the same pick as the engine (chosen slots first, then the
 // next look-alikes in order).
 const autoMix = (surface, from, i) => (o) => {
-  const va = o.variation || {}, base = getPath(o, from);
+  const va = texOf(o), base = getPath(o, from);
   const keys = MIX_KEYS[surface].slice(0, va[surface + 'MixCount'] || 2);
   const v = suggestVariants(base, Math.max(2, keys.length)).filter((k) => !keys.some((key) => va[key] === k));
   let n = 0;
@@ -813,15 +825,16 @@ const SCHEMA = {
       { path: ['details', 'studGap'], label: 'Stud spacing', type: 'int', min: 2, max: 16, show: DET('studs'), hint: 'Studs use the beam material.' },
     ] },
     { group: 'Texture', fields: [
+      { path: ['ownTexture'], label: 'Own texture (not shared)', type: 'check', wide: true, hint: 'Texture settings are shared by every box: change them here and all boxes follow. Tick this to give this box its own.' },
       { path: ['variation', 'wall'], label: 'Wall variation', type: 'range', min: 0, max: 80, step: 5, unit: '%', wide: true },
       { path: ['variation', 'roof'], label: 'Roof variation', type: 'range', min: 0, max: 80, step: 5, unit: '%', wide: true },
       { path: ['variation', 'style'], label: 'Pattern', type: 'select', options: STYLE_OPTIONS, wide: true, show: (o) => VAR('wall')(o) || VAR('roof')(o) },
       { path: ['variation', 'wallMixCount'], label: 'Wall mix blocks', type: 'int', min: 1, max: MIX_MAX, show: VAR('wall'), hint: 'How many different blocks the walls mix in. Pick each one below, or leave it on Auto for a look-alike.' },
-      ...MIX_KEYS.wall.map((k, i) => ({ path: ['variation', k], label: 'Wall mix ' + (i + 1), type: 'material', auto: autoMix('wall', ['wallMaterial'], i), wide: true,
-        show: (o) => VAR('wall')(o) && i < ((o.variation && o.variation.wallMixCount) || 2) })),
+      ...MIX_KEYS.wall.map((k, i) => ({ path: ['variation', k], label: 'Wall mix ' + (i + 1), labelFn: mixLabel('wall', i), type: 'material', auto: autoMix('wall', ['wallMaterial'], i), wide: true,
+        show: (o) => VAR('wall')(o) && i < (texOf(o).wallMixCount || 2) })),
       { path: ['variation', 'roofMixCount'], label: 'Roof mix blocks', type: 'int', min: 1, max: MIX_MAX, show: VAR('roof'), hint: 'How many different blocks the roof mixes in. Pick each one below, or leave it on Auto for a look-alike.' },
-      ...MIX_KEYS.roof.map((k, i) => ({ path: ['variation', k], label: 'Roof mix ' + (i + 1), type: 'material', auto: autoMix('roof', ['roof', 'material'], i), roof: true, wide: true,
-        show: (o) => VAR('roof')(o) && i < ((o.variation && o.variation.roofMixCount) || 2) })),
+      ...MIX_KEYS.roof.map((k, i) => ({ path: ['variation', k], label: 'Roof mix ' + (i + 1), labelFn: mixLabel('roof', i), type: 'material', auto: autoMix('roof', ['roof', 'material'], i), roof: true, wide: true,
+        show: (o) => VAR('roof')(o) && i < (texOf(o).roofMixCount || 2) })),
       { path: ['variation', 'reroll'], label: 'Reshuffle', type: 'action', wide: true, hint: 'Same mix, new random layout.', show: (o) => VAR('wall')(o) || VAR('roof')(o), run: (id) => rerollVariation(id) },
     ] },
   ],
@@ -870,8 +883,17 @@ const SCHEMA = {
     ] },
   ],
 };
-const getPath = (o, path) => path.reduce((a, k) => (a == null ? undefined : a[k]), o);
-const setPath = (o, path, v) => { let a = o; for (let i = 0; i < path.length - 1; i++) a = a[path[i]]; a[path[path.length - 1]] = v; };
+const getPath0 = (o, path) => path.reduce((a, k) => (a == null ? undefined : a[k]), o);
+// A box's texture fields ('variation', ...) live in the design's shared settings unless the box
+// keeps its own; getPath / setPath send them to the right place.
+const getPath = (o, path) => (path[0] === 'variation' ? getPath0(texOf(o), path.slice(1)) : getPath0(o, path));
+const setPath = (o, path, v) => {
+  if (path[0] === 'variation') { const t = texOf(o); setPath0(t, path.slice(1), v); return; }
+  // Opting out starts from the shared settings, so the look doesn't jump.
+  if (path.length === 1 && path[0] === 'ownTexture' && v && !o.ownTexture && state.design.variation) o.variation = JSON.parse(JSON.stringify(state.design.variation));
+  setPath0(o, path, v);
+};
+function setPath0(o, path, v) { let a = o; for (let i = 0; i < path.length - 1; i++) a = a[path[i]]; a[path[path.length - 1]] = v; }
 const fieldId = (field) => 'prop-' + (field.key || field.path.join('-')); // key: two fields sharing one path
 
 function renderProps(valuesOnly = false) {
@@ -992,7 +1014,7 @@ function cloneBlocks(n = state.clone.n, dirName = state.clone.dir, gap = state.c
 function buildField(f, field) {
   const id = fieldId(field);
   const wrap = h('div', { class: 'field' + (field.wide ? ' wide' : '') + (field.type === 'check' ? ' check' : '') + (field.type === 'action' ? ' action' : ''), id: id + '-field' });
-  const label = h('label', { for: id, text: field.label });
+  const label = h('label', { for: id, text: field.labelFn ? field.labelFn(f.obj) : field.label });
   let input;
   const changeKey = 'prop:' + f.obj.id + ':' + field.path.join('.');
   const commit = (value) => {
@@ -1080,6 +1102,7 @@ function syncPropValues() {
       const wrap = $(id + '-field');
       if (!el || !wrap) continue;
       wrap.hidden = field.show ? !field.show(f.obj) : false;
+      if (field.labelFn) { const lb = wrap.querySelector('label'); const t = field.labelFn(f.obj); if (lb && lb.textContent !== t) lb.textContent = t; }
       if (field.type === 'action') continue;
       const v = getPath(f.obj, field.path);
       if (field.type === 'material') {
@@ -1629,7 +1652,7 @@ function rerollVariation(id) {
   const f = findObject(id);
   if (!f) return;
   beginChange(null);
-  f.obj.variation.seed = 1 + Math.floor(Math.random() * 999998);
+  texOf(f.obj).seed = 1 + Math.floor(Math.random() * 999998);
   afterChange();
 }
 
@@ -1749,7 +1772,7 @@ function presetFromDesign(name) {
     upturn: b ? b.roof.upturn : 0,
     upturnReach: b ? b.roof.upturnReach : 6,
     details: D(b ? b.details : {}),
-    variation: b && b.variation ? { ...b.variation } : null,
+    variation: b ? { ...texOf(b) } : null,
   };
 }
 function applyPreset(p) {
@@ -1768,8 +1791,12 @@ function applyPreset(p) {
     // Presets without texture settings switch variation off, so styles don't leak across.
     const va = { ...VARIATION_DEFAULTS, ...(p.variation || {}) };
     for (const k of [...MIX_KEYS.wall, ...MIX_KEYS.roof]) if (va[k] && !FAMILIES[va[k]]) va[k] = '';
-    b.variation = { ...va, seed: (b.variation && b.variation.seed) || 1 };
+    if (b.ownTexture) b.variation = { ...va, seed: (b.variation && b.variation.seed) || 1 };
   }
+  // The shared texture (every box that doesn't keep its own).
+  const va = { ...VARIATION_DEFAULTS, ...(p.variation || {}) };
+  for (const k of [...MIX_KEYS.wall, ...MIX_KEYS.roof]) if (va[k] && !FAMILIES[va[k]]) va[k] = '';
+  d.variation = { ...va, seed: (d.variation && d.variation.seed) || 1 };
   for (const pl of d.pillars) pl.material = ok(p.pillar, pl.material);
   for (const sg of d.segments) sg.material = ok(p.segment, sg.material);
   afterChange();

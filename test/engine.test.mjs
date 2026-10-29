@@ -847,3 +847,21 @@ test('texture variation mixes in up to six chosen (or auto) blocks', () => {
   const am = new Set([...buildGrid(design([auto])).blocks.values()].filter((k) => k.path === 'wallMaterial').map((k) => k.mat));
   assert.ok(am.size >= 4, [...am].join(','));
 });
+
+test('texture settings are shared by all boxes unless a box keeps its own', () => {
+  const mats = (g, src) => new Set([...g.blocks.values()].filter((k) => k.src === src && k.path === 'wallMaterial').map((k) => k.mat));
+  const a = box({ id: 'b1', w: 9, d: 9, wallH: 6, wallMaterial: 'stone_bricks' });
+  const b = box({ id: 'b2', x: 20, w: 9, d: 9, wallH: 6, wallMaterial: 'stone_bricks' });
+  const shared = { wall: 60, style: 'scatter', wallMixCount: 1, wallMix: 'andesite' };
+  // shared settings reach every box
+  let g = buildGrid({ ...design([a, b]), variation: shared });
+  assert.ok(mats(g, 'b1').has('andesite') && mats(g, 'b2').has('andesite'));
+  // a box with its own texture ignores the shared one
+  g = buildGrid({ ...design([a, { ...b, ownTexture: true, variation: { wall: 60, style: 'scatter', wallMixCount: 1, wallMix: 'tuff_bricks' } }]), variation: shared });
+  assert.ok(mats(g, 'b1').has('andesite') && !mats(g, 'b1').has('tuff_bricks'));
+  assert.ok(mats(g, 'b2').has('tuff_bricks') && !mats(g, 'b2').has('andesite'));
+  // an older design with per-box settings keeps its look: the odd box keeps its own
+  const v = validateDesign(design([{ ...a, variation: shared }, { ...b, variation: shared }, box({ id: 'b3', x: 40, variation: { wall: 10 } })]));
+  assert.equal(v.variation.wall, 60);
+  assert.deepEqual(v.boxes.map((x) => x.ownTexture), [false, false, true]);
+});

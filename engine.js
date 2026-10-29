@@ -183,18 +183,25 @@ export function validateDesign(design) {
       else if (DETAIL_ENUMS[k]) det[k] = oneOf(det[k], DETAIL_ENUMS[k], v);
       else det[k] = familyKey(det[k], v, false);
     }
-    const va = b.variation && typeof b.variation === 'object' ? b.variation : {};
-    b.variation = va;
-    va.wall = int(va.wall, 0, 0, 100);
-    va.roof = int(va.roof, 0, 0, 100);
-    va.style = oneOf(va.style, VARIATION_STYLES, 'patches');
-    va.wallMixCount = int(va.wallMixCount, 2, 1, MIX_MAX);
-    va.roofMixCount = int(va.roofMixCount, 2, 1, MIX_MAX);
-    for (const k of [...MIX_KEYS.wall, ...MIX_KEYS.roof]) va[k] = va[k] === '' || va[k] == null ? '' : familyKey(va[k], '', false);
-    va.seed = int(va.seed, 1, 0, 999999);
+    b.variation = validateVariation(b.variation);
+    if (b.ownTexture !== undefined) b.ownTexture = bool(b.ownTexture, false);
     b.edits = validateEdits(b.edits, true);
   }
 
+  // Texture settings are shared by every box (design.variation) unless a box keeps its own
+  // (ownTexture). Older designs stored them per box: the most common settings become the
+  // shared ones and any box that differed keeps its own, so nothing changes look.
+  if (d.variation && typeof d.variation === 'object') {
+    d.variation = validateVariation(d.variation);
+    for (const b of d.boxes) if (b.ownTexture === undefined) b.ownTexture = false;
+  } else {
+    const sig = (va) => JSON.stringify(va);
+    const tally = new Map();
+    for (const b of d.boxes) tally.set(sig(b.variation), (tally.get(sig(b.variation)) || 0) + 1);
+    const common = [...tally.entries()].sort((a, c) => c[1] - a[1])[0];
+    d.variation = common ? JSON.parse(common[0]) : validateVariation({});
+    for (const b of d.boxes) if (b.ownTexture === undefined) b.ownTexture = sig(b.variation) !== sig(d.variation);
+  }
   d.pillars = d.pillars.filter((p) => p && typeof p === 'object');
   for (const p of d.pillars) {
     claim(p, 'p');
@@ -270,6 +277,19 @@ function validateEdits(list, rel) {
     byCell.set(k, out);
   }
   return [...byCell.values()].slice(-EDITS_MAX);
+}
+
+/** Texture-variation settings with every field checked (box.variation / design.variation). */
+function validateVariation(input) {
+  const va = input && typeof input === 'object' ? input : {};
+  va.wall = int(va.wall, 0, 0, 100);
+  va.roof = int(va.roof, 0, 0, 100);
+  va.style = oneOf(va.style, VARIATION_STYLES, 'patches');
+  va.wallMixCount = int(va.wallMixCount, 2, 1, MIX_MAX);
+  va.roofMixCount = int(va.roofMixCount, 2, 1, MIX_MAX);
+  for (const k of [...MIX_KEYS.wall, ...MIX_KEYS.roof]) va[k] = va[k] === '' || va[k] == null ? '' : familyKey(va[k], '', false);
+  va.seed = int(va.seed, 1, 0, 999999);
+  return va;
 }
 
 /** Unused id like "b3" (smallest free counter for the prefix). */
@@ -1288,7 +1308,7 @@ export function buildGrid(input) {
 
   // ---- STEP 7b: texture variation (main wall / roof material only) ------------------------
   for (const b of design.boxes) {
-    const va = b.variation;
+    const va = b.ownTexture ? b.variation : design.variation;
     if (!va.wall && !va.roof) continue;
     const mixes = {
       wallMaterial: va.wall ? pickMixes(MIX_KEYS.wall.slice(0, va.wallMixCount).map((k) => va[k]), b.wallMaterial) : null,
