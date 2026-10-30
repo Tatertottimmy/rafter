@@ -247,7 +247,63 @@ export function validateDesign(design) {
     f.hollow = bool(f.hollow, false);
   }
   d.edits = validateEdits(d.edits, false);
+
+  // Assets: small templates (windows, doors, ...) built in the Asset Studio. Cells are relative
+  // to the asset: z = 0 is the wall layer, +z sticks out in front, -z goes inside; 'erase'
+  // cells cut holes. Stamps place an asset on the building, facing out of a wall.
+  d.assets = (Array.isArray(d.assets) ? d.assets : []).filter((a) => a && typeof a === 'object').slice(0, ASSET_MAX);
+  for (const a of d.assets) {
+    claim(a, 'a');
+    a.name = str(a.name, 'Asset');
+    a.cells = validateEdits(a.cells, true).filter((c) => c.shape !== 'paint').slice(0, ASSET_CELLS_MAX);
+  }
+  const assetIds = new Set(d.assets.map((a) => a.id));
+  d.stamps = (Array.isArray(d.stamps) ? d.stamps : []).filter((t) => t && typeof t === 'object' && assetIds.has(t.asset));
+  for (const t of d.stamps) {
+    claim(t, 't');
+    t.x = int(t.x, 0, -4096, 4096);
+    t.y = int(t.y, 0, -64, 320);
+    t.z = int(t.z, 0, -4096, 4096);
+    t.facing = oneOf(t.facing, DIRS, 'south');
+  }
   return d;
+}
+
+export const ASSET_MAX = 64;
+export const ASSET_CELLS_MAX = 4096;
+
+/** Where an asset is held when placed: the middle of its bottom row, in the wall layer. */
+export function assetAnchor(asset) {
+  const cells = (asset && asset.cells) || [];
+  if (!cells.length) return { ax: 0, ay: 0 };
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity;
+  for (const c of cells) { x0 = Math.min(x0, c.x); x1 = Math.max(x1, c.x); y0 = Math.min(y0, c.y); }
+  return { ax: Math.floor((x0 + x1) / 2), ay: y0 };
+}
+
+const TURN = { south: 0, east: 1, north: 2, west: 3 };
+/**
+ * The world cells of an asset placed at (x, y, z) facing `facing` (the way its front, +z, points
+ * out of the wall). Stair facings and log / pane axes turn with it.
+ */
+export function stampCells(asset, { x, y, z, facing = 'south' }) {
+  const q = TURN[facing] || 0;
+  const { ax, ay } = assetAnchor(asset);
+  const rot = (dx, dz) => (q === 0 ? [dx, dz] : q === 1 ? [dz, -dx] : q === 2 ? [-dx, -dz] : [-dz, dx]);
+  const turnDir = (d) => {
+    const [ox, oz] = DIR_OFFSET[d];
+    const [rx, rz] = rot(ox, oz);
+    return DIRS.find((k) => DIR_OFFSET[k][0] === rx && DIR_OFFSET[k][1] === rz) || d;
+  };
+  const out = [];
+  for (const c of (asset && asset.cells) || []) {
+    const [rx, rz] = rot(c.x - ax, c.z);
+    const cell = { ...c, x: x + rx, y: y + c.y - ay, z: z + rz };
+    if (c.facing) cell.facing = turnDir(c.facing);
+    if (c.axis && q % 2 === 1 && c.axis !== 'y') cell.axis = c.axis === 'x' ? 'z' : 'x';
+    out.push(cell);
+  }
+  return out;
 }
 
 /**
@@ -366,6 +422,8 @@ export function scaleDesign(input, factor, { only = null } = {}) {
     Object.assign(f, { x: fx0, z: fz0, w: fx1 - fx0, d: fz1 - fz0, baseY: fy0, h: fy1 - fy0 });
   }
   if (!only) d.edits = scaleEdits(d.edits, 0, 0, 0, 0, 0, 0);
+  // Placed assets keep their size (they are templates); their places scale with the build.
+  for (const t of d.stamps || []) if (pick(t)) { t.x = S(t.x, ax); t.y = S(t.y, ay); t.z = S(t.z, az); }
   return { design: d, dropped };
 }
 
@@ -378,6 +436,7 @@ export function rotatePatch(kind, obj, q) {
   q = ((q % 4) + 4) % 4;
   if (!q) return {};
   const turn = (dir) => { for (let i = 0; i < q; i++) dir = CW[dir]; return dir; };
+  if (kind === 'stamp') return { facing: turn(obj.facing || 'south') };
   if (kind === 'fill') {
     const cx = obj.x + obj.w / 2, cz = obj.z + obj.d / 2;
     const odd = q % 2 === 1;
@@ -431,7 +490,7 @@ export function rotatePatch(kind, obj, q) {
 
 export function newId(design, prefix, extraUsed) {
   const used = new Set(extraUsed || []);
-  for (const list of [design?.boxes, design?.pillars, design?.segments, design?.fills]) {
+  for (const list of [design?.boxes, design?.pillars, design?.segments, design?.fills, design?.assets, design?.stamps]) {
     if (Array.isArray(list)) for (const o of list) if (o && typeof o.id === 'string') used.add(o.id);
   }
   let n = 1;
@@ -712,7 +771,10 @@ function roofTiers(design, regions) {
         // Walls whose top only just meets the slope count as clear for a storey set well in from
         // A's walls, but not for a dormer standing on A's wall line.
         const inside = B.x > A.x && B.z > A.z && B.x + B.w < A.x + A.w && B.z + B.d < A.z + A.d;
-        stacks = (B.baseY > A.baseY && B.baseY >= top - 1 - EPS) || (EB > EA && EB > wallTop - (inside ? 1 : 0) + EPS);
+        // A box standing fully inside A's walls from A's eave up is an upper storey, never a
+        // dormer, even when A's slope rises past its walls (a big hip roof round a small storey).
+        stacks = (B.baseY > A.baseY && B.baseY >= top - 1 - EPS) || (EB > EA && EB > wallTop - (inside ? 1 : 0) + EPS)
+          || (inside && B.baseY >= EA - 1 && EB > EA);
       }
       if (stacks) over.push([bi, ai]);
     }
@@ -1352,6 +1414,22 @@ export function buildGrid(input) {
   for (const b of design.boxes) for (const e of b.edits) edits.push({ ...e, x: b.x + e.x, y: b.baseY + e.y, z: b.z + e.z, owner: b.id });
   for (const e of design.edits) edits.push(e);
   let editedStairs = false;
+  // Placed assets first (they carve into and add to the building); hand edits still win.
+  const assetById = new Map(design.assets.map((a) => [a.id, a]));
+  for (const st of design.stamps) {
+    const asset = assetById.get(st.asset);
+    if (!asset) continue;
+    for (const c of stampCells(asset, st)) {
+      if (c.y < -64 || c.y > 319) continue;
+      if (c.shape === 'erase') { blocks.delete(blockKey(c.x, c.y, c.z)); continue; }
+      let blk;
+      if (c.shape === 'slab') blk = slabBlock(c.mat, c.half, 'stamp');
+      else if (c.shape === 'stair') { blk = stairBlock(c.mat, c.facing, c.half, 'stamp'); editedStairs = true; }
+      else if (c.shape === 'pane') blk = paneBlock(c.mat, c.axis, 'stamp');
+      else blk = fullBlock(c.mat, 'stamp', c.axis);
+      put(c.x, c.y, c.z, tag(blk, st.id, 'asset'));
+    }
+  }
   for (const e of edits) {
     const key = blockKey(e.x, e.y, e.z);
     const cur = blocks.get(key);
@@ -1372,7 +1450,7 @@ export function buildGrid(input) {
     blk.edited = true;
     put(e.x, e.y, e.z, blk);
   }
-  if (editedStairs || edits.length || pillarStairs) {
+  if (editedStairs || edits.length || pillarStairs || design.stamps.length) {
     for (const blk of blocks.values()) {
       if (blk.kind === 'stair') blk.props.shape = stairShape(blocks, blk.x, blk.y, blk.z, blk);
     }

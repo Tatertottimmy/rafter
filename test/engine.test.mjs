@@ -865,3 +865,32 @@ test('texture settings are shared by all boxes unless a box keeps its own', () =
   assert.equal(v.variation.wall, 60);
   assert.deepEqual(v.boxes.map((x) => x.ownTexture), [false, false, true]);
 });
+
+test('assets: placed on a wall facing out, cutting holes and adding blocks; templates update', () => {
+  // A window: a 1x2 hole in the wall layer with a pane, and a sill stair sticking out in front.
+  const asset = { id: 'a1', name: 'Window', cells: [
+    { x: 0, y: 1, z: 0, shape: 'pane', mat: 'glass', axis: 'x' },
+    { x: 0, y: 2, z: 0, shape: 'erase' },
+    { x: 0, y: 0, z: 1, shape: 'stair', mat: 'spruce', facing: 'north', half: 'top' },
+  ] };
+  const house = box({ w: 9, d: 7, wallH: 4 });
+  // south wall is z = 6; east wall is x = 8
+  const d = { ...design([house]), assets: [asset], stamps: [{ id: 't1', asset: 'a1', x: 4, y: 1, z: 6, facing: 'south' }, { id: 't2', asset: 'a1', x: 8, y: 1, z: 3, facing: 'east' }] };
+  const g = buildGrid(d);
+  assert.equal(get(g, 4, 2, 6).kind, 'pane', 'glass in the south wall');
+  assert.equal(get(g, 4, 3, 6), undefined, 'hole above it');
+  const sill = get(g, 4, 1, 7);
+  assert.equal(sill.kind, 'stair'); assert.equal(sill.props.facing, 'north', 'sill tucks back into the south wall');
+  assert.equal(get(g, 8, 2, 3).kind, 'pane', 'glass in the east wall');
+  assert.equal(get(g, 8, 2, 3).props.north, 'true', 'pane turned to run along the east wall');
+  assert.equal(get(g, 9, 1, 3).props.facing, 'west', 'east sill tucks back west');
+  assert.equal(get(g, 4, 2, 6).src, 't1');
+  // editing the template changes every placement
+  const d2 = { ...d, assets: [{ ...asset, cells: asset.cells.map((c) => (c.mat === 'glass' ? { ...c, mat: 'red_stained_glass' } : c)) }] };
+  const g2 = buildGrid(d2);
+  assert.equal(get(g2, 4, 2, 6).mat, 'red_stained_glass');
+  assert.equal(get(g2, 8, 2, 3).mat, 'red_stained_glass');
+  // stamps of a deleted asset are dropped; rotatePatch turns a stamp
+  assert.equal(validateDesign({ ...d, assets: [] }).stamps.length, 0);
+  assert.deepEqual(rotatePatch('stamp', { facing: 'south' }, 1), { facing: 'west' });
+});
