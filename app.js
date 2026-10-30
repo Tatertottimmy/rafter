@@ -48,6 +48,7 @@ const state = {
   tool: 'select',   // select | paint | place | erase
   selectedBlocks: [], // world cells [x,y,z] of selected hand-placed blocks (Select tool)
   brush: 'stone_bricks',
+  depthDir: 'in', // Depth tool: push blocks in or pull them out
   paintScope: 'part', // part = the whole wall/roof/trim the block belongs to; block = one block
   shape: 'full',
   area: false,         // Place / Erase / Paint: drag a rectangle instead of single blocks
@@ -838,9 +839,9 @@ function paletteUses(scopeId = null) {
     const det = b.details || {}, r = b.roof, va = texOf(b);
     add(r.material, 'Roof', 'stairs', b.id, (t) => { r.material = t; });
     add(b.wallMaterial, 'Walls', null, b.id, (t) => { b.wallMaterial = t; });
-    if (det.trim || det.ridge) add(det.trimMat, 'Trim & ridge', 'stairs', b.id, (t) => { det.trimMat = t; });
-    if (det.corners) add(det.cornerMat, 'Corners', null, b.id, (t) => { det.cornerMat = t; });
-    if (det.base) add(det.baseMat, 'Base course', null, b.id, (t) => { det.baseMat = t; });
+    if (det.trim || det.ridge || det.cornice || det.hoods || det.shutters) add(det.trimMat, 'Trim & ledges', 'stairs', b.id, (t) => { det.trimMat = t; });
+    if (det.corners || det.pilasters) add(det.cornerMat, 'Corners & posts', null, b.id, (t) => { det.cornerMat = t; });
+    if (det.base || det.plinth) add(det.baseMat, 'Base course', null, b.id, (t) => { det.baseMat = t; });
     if (det.beams || det.studs) add(det.beamMat, 'Beams & studs', null, b.id, (t) => { det.beamMat = t; });
     if (det.windows) add(det.windowMat, 'Windows', det.winStyle === 'pane' ? 'pane' : null, b.id, (t) => { det.windowMat = t; });
     if (det.frame && (det.windows || det.door)) add(det.frameMat, 'Frames', null, b.id, (t) => { det.frameMat = t; });
@@ -1017,7 +1018,7 @@ function wirePaletteWin() {
   });
 }
 // [detail flag(s), material key]: a material only counts as "used" while its detail is on.
-const DETAIL_MATS = [[['trim', 'ridge'], 'trimMat'], [['corners'], 'cornerMat'], [['base'], 'baseMat'], [['beams'], 'beamMat'], [['windows'], 'windowMat']];
+const DETAIL_MATS = [[['trim', 'ridge', 'cornice', 'hoods', 'shutters'], 'trimMat'], [['corners', 'pilasters'], 'cornerMat'], [['base', 'plinth'], 'baseMat'], [['beams'], 'beamMat'], [['windows'], 'windowMat']];
 const flagOn = (b, flags) => !!b.details && flags.some((k) => b.details[k]);
 
 // ------------------------------------------------------------------ object list
@@ -1151,17 +1152,27 @@ const SCHEMA = {
       { path: ['details', 'auto'], label: 'Auto details', type: 'action', wide: true, hint: 'Turns every detail on and picks matching materials.', run: (id) => autoDetails([id]) },
       { path: ['details', 'trim'], label: 'Roof edge trim', type: 'check' },
       { path: ['details', 'ridge'], label: 'Ridge in trim', type: 'check' },
-      { path: ['details', 'trimMat'], label: 'Trim material', type: 'material', roof: true, wide: true, show: (o) => DET('trim')(o) || DET('ridge')(o) },
+      { path: ['details', 'trimMat'], label: 'Trim material', type: 'material', roof: true, wide: true, show: (o) => ['trim', 'ridge', 'cornice', 'hoods', 'shutters'].some((k) => DET(k)(o)) },
       { path: ['details', 'corners'], label: 'Corner posts', type: 'check' },
       { path: ['details', 'beams'], label: 'Eave beams', type: 'check' },
-      { path: ['details', 'cornerMat'], label: 'Post material', type: 'material', wide: true, show: DET('corners') },
+      { path: ['details', 'cornerMat'], label: 'Post material', type: 'material', wide: true, show: (o) => DET('corners')(o) || DET('pilasters')(o) },
       { path: ['details', 'beamMat'], label: 'Beam material', type: 'material', wide: true, show: DET('beams') },
       { path: ['details', 'base'], label: 'Foundation course', type: 'check' },
       { path: ['details', 'windows'], label: 'Windows', type: 'check' },
-      { path: ['details', 'baseMat'], label: 'Foundation material', type: 'material', wide: true, show: DET('base') },
+      { path: ['details', 'baseMat'], label: 'Foundation material', type: 'material', wide: true, show: (o) => DET('base')(o) || DET('plinth')(o) },
       { path: ['details', 'windowMat'], label: 'Window glass', type: 'material', wide: true, show: DET('windows') },
       { path: ['details', 'door'], label: 'Doorway', type: 'check' },
       { path: ['details', 'studs'], label: 'Wall studs', type: 'check' },
+    ] },
+    { group: 'Depth', fields: [
+      { path: ['details', 'depthAuto'], label: 'Add depth', type: 'action', wide: true, hint: 'Posts that stand out, windows set back, a ledge at the foot and under the eave, hoods over the windows. Flat walls look flat: these give them shadow.', run: (id) => addDepthTo([id]) },
+      { path: ['details', 'pilasters'], label: 'Posts stand out', type: 'check' },
+      { path: ['details', 'pilasterGap'], label: 'Post every (0 = corners)', type: 'int', min: 0, max: 16, show: DET('pilasters') },
+      { path: ['details', 'recess'], label: 'Windows set back', type: 'check', show: DET('windows') },
+      { path: ['details', 'plinth'], label: 'Ledge at the foot', type: 'check' },
+      { path: ['details', 'cornice'], label: 'Ledge under the eave', type: 'check' },
+      { path: ['details', 'hoods'], label: 'Window hoods', type: 'check', show: DET('windows') },
+      { path: ['details', 'shutters'], label: 'Shutters', type: 'check', show: DET('windows') },
     ] },
     { group: 'Windows & doors', show: (o) => DET('windows')(o) || DET('door')(o) || DET('studs')(o), fields: [
       { path: ['details', 'winStyle'], label: 'Glass', type: 'select', options: [['pane', 'Glass panes'], ['block', 'Glass blocks']], show: DET('windows') },
@@ -1766,11 +1777,13 @@ const TOOL_HINTS = {
   place: 'Click a block face (or the ground) to place · Stairs face the way you look · Shift+drag places a row · Alt+click picks up a material · drag or right-drag to orbit, middle-drag to pan',
   erase: 'Click a block to remove it · Shift+drag erases a stroke · drag or right-drag to orbit, middle-drag to pan',
   stamp: 'Point at a wall: the asset turns to face out of it · click to place · Esc to stop · Assets… to make or edit one',
+  depth: 'Click a wall to push that block in (or pull it out) · Shift+click does the opposite · Area: drag a panel on a wall · Add depth to all gives every building posts, ledges and set-back windows',
 };
 const AREA_HINTS = {
   paint: 'Drag a rectangle to repaint every block on that layer · click for one block · right-drag to orbit',
   place: 'Drag a rectangle (Shift = square) to make a fill (one object you can move and resize later); Ctrl+drag draws it out from the centre, and it snaps to the centres and corners of objects · click for one block · Alt+drag selects · right-drag to orbit',
   erase: 'Drag a rectangle to clear every block on that layer · click for one block · right-drag to orbit',
+  depth: 'Drag a rectangle on a wall to push that whole panel in (or pull it out) a block · click for one block · right-drag to orbit',
 };
 const AREA_MAX = 128 * 128;
 const FILL_MAX = 256 * 256 * 8;
@@ -1794,6 +1807,13 @@ function areaAction(r, info) {
   const x0 = Math.min(r.x0, r.x1), x1 = Math.max(r.x0, r.x1), z0 = Math.min(r.z0, r.z1), z1 = Math.max(r.z0, r.z1);
   const y0 = Math.max(-64, Math.min(r.y0, r.y1)), y1 = Math.min(319, Math.max(r.y0, r.y1));
   const vol = (x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1);
+  if (state.tool === 'depth') {
+    if (vol > AREA_MAX) { toast('That area is too big (128 × 128 max)', true); return; }
+    const cells = [];
+    for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) cells.push([x, y, z]);
+    depthCells(cells, info, { area: true });
+    return;
+  }
   if (state.tool === 'place') {
     if (x1 - x0 >= 256 || z1 - z0 >= 256 || y1 - y0 >= 128 || vol > FILL_MAX) { toast('That fill is too big (256 × 256 max)', true); return; }
     placeFill({ x0, y0, z0, x1, y1, z1 }, info || {});
@@ -1906,6 +1926,8 @@ function updateToolbar() {
   $('brushBtn').hidden = t !== 'paint' && t !== 'place';
   $('scopeSeg').hidden = t !== 'paint';
   $('areaSeg').hidden = t === 'select' || t === 'stamp' || t === 'turn';
+  $('depthSeg').hidden = $('btnDepthAll').hidden = t !== 'depth';
+  for (const b of $('depthSeg').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.depth === state.depthDir));
   $('stampPick').hidden = t !== 'stamp';
   if (t === 'stamp') renderStampPick();
   for (const b of $('areaSeg').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.area === (!state.area ? 'one' : state.circle ? 'circle' : 'area')));
@@ -1966,6 +1988,7 @@ function blockAction(info, mods = {}) {
     return;
   }
   if (state.tool === 'turn') { turnBlockAt(info, mods); return; }
+  if (state.tool === 'depth') { depthCells([info.cell], info, mods); return; }
   let run = null, msg = null;
   if (state.tool === 'paint') {
     if (!at) return;
@@ -2049,6 +2072,77 @@ function turnBlockAt(info, mods = {}) {
   } else putEdit({ x, y, z, mat: at.mat, ...next }, ownerBox(at.src));
   afterChange();
   syncPropValues();
+}
+/** A block in the grid as the hand edit that would make it. */
+function editFromBlock(at) {
+  const p = at.props || {};
+  if (at.kind === 'stair') return { shape: 'stair', mat: at.mat, facing: p.facing || 'north', half: p.half === 'top' ? 'top' : 'bottom' };
+  if (at.kind === 'slab') return { shape: p.type === 'double' ? 'full' : 'slab', mat: at.mat, half: p.type === 'top' ? 'top' : 'bottom' };
+  if (at.kind === 'pane') return { shape: 'pane', mat: at.mat, axis: p.east === 'true' || p.west === 'true' ? 'x' : 'z' };
+  if (at.kind === 'trapdoor') return { shape: 'trapdoor', mat: at.mat, facing: p.facing || 'north', half: p.half === 'top' ? 'top' : 'bottom', ...(p.open === 'true' ? { open: true } : {}) };
+  return { shape: 'full', mat: at.mat, ...(p.axis ? { axis: p.axis } : {}) };
+}
+/**
+ * Depth tool: push wall blocks one block in (the block moves back into the wall) or pull them
+ * one block out (a copy stands in front), as one undo step. The direction comes from the wall
+ * face you click or start the drag on; Shift flips it. Doors stay put.
+ */
+function depthCells(cells, info, mods = {}) {
+  const g = state.grid;
+  const n = info && info.normal;
+  if (!n || info.ground || n[1] !== 0 || info.fromPlan) { toast('Click the side of a wall to push it in or pull it out', true); return; }
+  const out = (state.depthDir === 'out') !== (!!mods.shift && !mods.stroke);
+  const s = out ? 1 : -1;
+  const taken = new Set(), runs = [];
+  let blocked = 0;
+  for (const [x, y, z] of cells) {
+    const at = g.blocks.get(blockKey(x, y, z));
+    if (!at || at.kind === 'door') continue;
+    const t = [x + s * n[0], y, z + s * n[2]];
+    const tk = blockKey(...t);
+    if (g.blocks.has(tk) || taken.has(tk)) { blocked++; continue; }
+    taken.add(tk);
+    const edit = { ...editFromBlock(at), x: t[0], y: t[1], z: t[2] };
+    const box = ownerBox(at.src);
+    runs.push(() => {
+      if (!out) {
+        const ex = placedEdit([x, y, z]);
+        if (ex) ex.list.splice(ex.index, 1); else putEdit({ x, y, z, shape: 'erase' }, box);
+      }
+      putEdit(edit, box);
+    });
+  }
+  if (!runs.length) {
+    if (!mods.stroke) toast(blocked ? (out ? 'Something is already in front of that' : 'Something is already behind that: the wall is thicker there') : 'Nothing to move there', true);
+    return;
+  }
+  beginChange(mods.stroke ? 'stroke:' + mods.stroke : null);
+  for (const run of runs) run();
+  afterChange();
+  syncPropValues();
+  updateToolbar();
+  if (mods.area) toast((out ? 'Pulled out ' : 'Pushed in ') + fmt(runs.length) + ' block' + (runs.length === 1 ? '' : 's') + (blocked ? ` (${fmt(blocked)} had no room)` : ''), false, { label: 'Undo', run: undo });
+}
+/** One click of depth for whole buildings: posts, set-back windows, ledges and hoods. */
+function addDepthTo(ids) {
+  const boxes = state.design.boxes.filter((b) => b.walls && (!ids || ids.includes(b.id)));
+  if (!boxes.length) { toast('No buildings with walls to add depth to', true); return; }
+  beginChange(null);
+  for (const b of boxes) {
+    const det = b.details, sug = suggestDetails(b);
+    if (!det.corners) det.cornerMat = sug.cornerMat;
+    if (!det.base) det.baseMat = sug.baseMat;
+    if (!det.trim && !det.ridge) det.trimMat = sug.trimMat;
+    det.pilasters = true;
+    det.pilasterGap = Math.max(b.w, b.d) >= 15 ? 6 : 0;
+    det.recess = !!det.windows;
+    det.plinth = true;
+    det.cornice = true;
+    det.hoods = !!det.windows;
+  }
+  afterChange();
+  renderProps(true);
+  toast(boxes.length === 1 ? 'Depth added to ' + (boxes[0].name || boxes[0].id) : `Depth added to ${boxes.length} buildings`, false, { label: 'Undo', run: undo });
 }
 /**
  * Door: faces the way you look, so you walk in through it. Trapdoor: hinged on the block you
@@ -2819,7 +2913,7 @@ function onKeyDown(e) {
   }
   if (k === 'r' && state.selectedId) { e.preventDefault(); rotateSelected(e.shiftKey ? -1 : 1); return; }
   if (k === 'a' && state.tool !== 'select' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); setArea(!state.area); return; }
-  const toolKey = { v: 'select', b: 'paint', p: 'place', e: 'erase', t: 'turn' }[k];
+  const toolKey = { v: 'select', b: 'paint', p: 'place', e: 'erase', t: 'turn', d: 'depth' }[k];
   if (toolKey && !e.altKey) { e.preventDefault(); setTool(toolKey); return; }
   if (e.key.startsWith('Arrow') && state.selectedId) {
     e.preventDefault();
@@ -2943,6 +3037,8 @@ function wire() {
 
   for (const b of $('toolSeg').querySelectorAll('button')) b.addEventListener('click', () => setTool(b.dataset.tool));
   for (const b of $('scopeSeg').querySelectorAll('button')) b.addEventListener('click', () => { state.paintScope = b.dataset.scope; updateToolbar(); });
+  for (const b of $('depthSeg').querySelectorAll('button')) b.addEventListener('click', () => { state.depthDir = b.dataset.depth; updateToolbar(); });
+  $('btnDepthAll').addEventListener('click', () => addDepthTo(null));
   for (const b of $('shapeSeg').querySelectorAll('button')) b.addEventListener('click', () => {
     if (b.dataset.shape === 'stair' && state.shape === 'stair') { // second click turns plan stairs
       const order = ['north', 'east', 'south', 'west'];

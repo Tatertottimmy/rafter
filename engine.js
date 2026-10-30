@@ -32,9 +32,14 @@ export const DETAIL_DEFAULTS = {
   frame: false, frameMat: 'stripped_spruce_log', sills: false, sillMat: 'spruce',
   door: false, doorSide: 'south', doorWidth: 1, doorHeight: 2,
   studs: false, studGap: 3,
+  // Depth: parts that stand out from the wall face or sit back in it, so walls aren't flat.
+  pilasters: false, pilasterGap: 0, // corner posts (and posts every pilasterGap blocks) one block proud
+  recess: false,                    // windows set one block back into the wall
+  plinth: false, cornice: false,    // a stair ledge round the foot / under the eave
+  hoods: false, shutters: false,    // a little stair roof over each window, open trapdoors beside it
 };
 const DETAIL_ENUMS = { winStyle: ['pane', 'block'], winTop: ['flat', 'arch'], doorSide: ['north', 'east', 'south', 'west'] };
-const DETAIL_RANGES = { winWidth: [1, 16], winHeight: [1, 16], winSill: [0, 16], winGap: [0, 16], doorWidth: [1, 8], doorHeight: [1, 16], studGap: [2, 16] };
+const DETAIL_RANGES = { winWidth: [1, 16], winHeight: [1, 16], winSill: [0, 16], winGap: [0, 16], doorWidth: [1, 8], doorHeight: [1, 16], studGap: [2, 16], pilasterGap: [0, 16] };
 const SIDE_FLAG = { north: 'winNorth', east: 'winEast', south: 'winSouth', west: 'winWest' };
 // Pillars: thickness, shape (full blocks or a wall-block post), base and capital.
 export const PILLAR_DEFAULTS = { size: 1, shape: 'block', base: 'none', baseMat: 'stone_bricks', cap: 'none', capMat: 'stone_bricks' };
@@ -1334,6 +1339,72 @@ export function buildGrid(input) {
     }
     return false;
   };
+  // Depth (after every box's walls, so it can see its neighbours): posts, ledges, hoods and
+  // shutters go in the cells just outside the wall face; recessed windows move their glass one
+  // cell in. Nothing goes where another box stands or where anything is already built.
+  const inOtherBox = (b, x, y, z) => design.boxes.some((o) => o !== b && x >= o.x && x < o.x + o.w && z >= o.z && z < o.z + o.d && y >= o.baseY && y < o.baseY + o.wallH);
+  const addDepth = (b) => {
+    const det = b.details;
+    if (!det.pilasters && !det.recess && !det.plinth && !det.cornice && !det.hoods && !det.shutters) return;
+    const E = b.baseY + b.wallH, x1 = b.x + b.w - 1, z1 = b.z + b.d - 1;
+    const op = wallOpenings(b);
+    const own = (x, y, z) => { const k = blocks.get(blockKey(x, y, z)); return !!k && k.src === b.id; };
+    const free = (x, y, z) => !has(x, y, z) && !inOtherBox(b, x, y, z);
+    const putOut = (x, y, z, blk, path) => { if (free(x, y, z)) put(x, y, z, tag(blk, b.id, path)); };
+    const trimStair = (facing, half) => (fam(det.trimMat).stairs ? stairBlock(det.trimMat, facing, half, 'wall') : slabBlock(det.trimMat, half === 'top' ? 'top' : 'bottom', 'wall'));
+    const SIDES = [
+      ['north', b.w, (i) => [b.x + i, b.z]], ['south', b.w, (i) => [b.x + i, z1]],
+      ['west', b.d, (i) => [b.x, b.z + i]], ['east', b.d, (i) => [x1, b.z + i]],
+    ];
+    for (const [side, L, cell] of SIDES) {
+      const [dx, dz] = DIR_OFFSET[side], inward = OPPOSITE[side];
+      const along = side === 'north' || side === 'south' ? 'x' : 'z';
+      const kindAt = (i, y) => (i > 0 && i < L - 1 ? op.at(side, i, y) : null);
+      const glassRows = (i) => { const r = []; for (let y = b.baseY; y < E; y++) if (kindAt(i, y) === 'glass') r.push(y); return r; };
+      const opening = (i) => { for (let y = b.baseY; y < E; y++) { const k = kindAt(i, y); if (k === 'glass' || k === 'door') return true; } return false; };
+      for (let i = 0; i < L; i++) {
+        const [cx, cz] = cell(i), ox = cx + dx, oz = cz + dz;
+        const rows = glassRows(i);
+        // Recessed windows: the glass moves one cell in; the wall face keeps its jambs.
+        if (det.recess && L > 2) for (const y of rows) {
+          const g = blocks.get(blockKey(cx, y, cz));
+          if (!g || g.src !== b.id || g.path !== 'details.windowMat' || has(cx - dx, y, cz - dz)) continue;
+          blocks.delete(blockKey(cx, y, cz));
+          put(cx - dx, y, cz - dz, g);
+        }
+        // Posts one block proud: at the corners, and every pilasterGap blocks between openings.
+        const corner = i === 0 || i === L - 1;
+        if (det.pilasters && (corner || (det.pilasterGap > 0 && i % det.pilasterGap === 0 && !opening(i - 1) && !opening(i) && !opening(i + 1)))) {
+          for (let y = b.baseY; y < E; y++) if (own(cx, y, cz)) putOut(ox, y, oz, fullBlock(det.cornerMat, 'wall', 'y'), 'details.cornerMat');
+          if (corner) { // fill the outside corner too, so the post wraps round it
+            const [sx, sz] = i === 0 ? (along === 'x' ? [-1, 0] : [0, -1]) : (along === 'x' ? [1, 0] : [0, 1]);
+            for (let y = b.baseY; y < E; y++) if (own(cx, y, cz)) putOut(ox + sx, y, oz + sz, fullBlock(det.cornerMat, 'wall', 'y'), 'details.cornerMat');
+          }
+        }
+        // Plinth: a stair ledge along the foot of the wall (not across a doorway).
+        if (det.plinth && own(cx, b.baseY, cz) && kindAt(i, b.baseY + 1) !== 'door') {
+          const f = fam(det.baseMat);
+          putOut(ox, b.baseY, oz, f.stairs ? stairBlock(det.baseMat, inward, 'bottom', 'wall') : slabBlock(det.baseMat, 'bottom', 'wall'), 'details.baseMat');
+        }
+        // Cornice: upside-down stairs under the eave (one lower if the roof's overhang is there).
+        if (det.cornice) for (const y of [E - 1, E - 2]) {
+          if (y <= b.baseY || !own(cx, y, cz)) continue;
+          if (free(ox, y, oz)) { put(ox, y, oz, tag(trimStair(inward, 'top'), b.id, 'details.trimMat')); break; }
+        }
+        // Hoods: a little stair roof over each window.
+        if (det.hoods && rows.length) putOut(ox, rows[rows.length - 1] + 1, oz, trimStair(inward, 'bottom'), 'details.trimMat');
+        // Shutters: open trapdoors either side of each window.
+        if (det.shutters && rows.length) {
+          const mat = fam(det.trimMat).trapdoor ? det.trimMat : 'spruce';
+          for (const j of [i - 1, i + 1]) {
+            if (j < 0 || j >= L || glassRows(j).length) continue;
+            const [sx, sz] = cell(j);
+            for (const y of rows) putOut(sx + dx, y, sz + dz, trapdoorBlock(mat, side, 'bottom', true, 'wall'), 'details.trimMat');
+          }
+        }
+      }
+    }
+  };
   for (const b of design.boxes) {
     if (!b.walls) continue;
     const bi = design.boxes.indexOf(b);
@@ -1391,6 +1462,7 @@ export function buildGrid(input) {
       put(x, y, z, tag(blk, b.id, 'details.sillMat'));
     }
   }
+  for (const b of design.boxes) if (b.walls) addDepth(b);
   for (const b of design.boxes) {
     if (!b.floor) continue;
     for (let cz = b.z + 1; cz < b.z + b.d - 1; cz++) {

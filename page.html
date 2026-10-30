@@ -737,6 +737,7 @@
             <button type="button" data-tool="place" aria-pressed="false" title="Place single blocks (P)">Place</button>
             <button type="button" data-tool="erase" aria-pressed="false" title="Remove single blocks (E)">Erase</button>
             <button type="button" data-tool="turn" aria-pressed="false" title="Turn stairs, doors, trapdoors, panes and logs: click to turn clockwise, Shift+click to turn back (T)">Turn</button>
+            <button type="button" data-tool="depth" aria-pressed="false" title="Push wall blocks in or pull them out a block, so walls aren't flat (D)">Depth</button>
             <button type="button" data-tool="stamp" aria-pressed="false" title="Place an asset (window, door, …) on a wall">Asset</button>
           </div>
     <select id="stampPick" aria-label="Asset to place" hidden></select>
@@ -755,6 +756,11 @@
       <button type="button" data-scope="part" aria-pressed="true" title="Repaint the whole wall, roof, trim, post… the block belongs to">Whole part</button>
       <button type="button" data-scope="block" aria-pressed="false" title="Repaint only the block you click">One block</button>
     </div>
+    <div class="seg" id="depthSeg" aria-label="Depth direction" hidden>
+      <button type="button" data-depth="in" aria-pressed="true" title="Push the blocks you click one block into the wall (Shift+click: pull out)">Push in</button>
+      <button type="button" data-depth="out" aria-pressed="false" title="Pull the blocks you click one block out of the wall (Shift+click: push in)">Pull out</button>
+    </div>
+    <button type="button" class="btn small" id="btnDepthAll" hidden title="Turn on posts, set-back windows, ledges and window hoods for every building">Add depth to all</button>
     <div class="seg" id="areaSeg" aria-label="Area" hidden>
       <button type="button" data-area="one" aria-pressed="true" title="Click acts on one block">One</button>
       <button type="button" data-area="area" aria-pressed="false" title="Drag a rectangle to fill, clear or repaint a whole floor (A)">Area</button>

@@ -59,7 +59,7 @@ No build step is needed to develop: serve the folder with any static web server
 ## Using it
 
 - **Layout**: the header holds undo/redo, presets, Open / Save / Reset and Export. Under it the
-  toolbar has the tools (Select, Paint, Place, Erase, Turn, Asset) with their options, and the view
+  toolbar has the tools (Select, Paint, Place, Erase, Turn, Depth, Asset) with their options, and the view
   controls (layer slider, Slice, Snap, Frame). Vertical tabs run down both sides: **Objects**,
   **Palette** and **Assets** on the left; **Properties**, **Layers**, **Materials** and **Export** on
   the right. Selecting something opens Properties. Click the open tab again to fold its panel away
@@ -122,7 +122,13 @@ No build step is needed to develop: serve the folder with any static web server
   come in every wood, iron and copper; select a placed door to open or close it or flip its hinge.
   **Turn** (T) turns any block that has a direction (stairs, doors, trapdoors, panes, logs) a
   quarter clockwise when you click it, Shift+click turns it back. It works on roof stairs and
-  asset blocks too, not just ones you placed. **Area** (A) mode:
+  asset blocks too, not just ones you placed. **Depth** (D) breaks up flat walls: click a wall
+  block to push it one block in, or pull it one block out (Push in / Pull out, Shift+click does
+  the other one); in Area mode drag a panel on a wall to recess or raise the whole thing. **Add
+  depth to all** (and **Add depth** in a box's Depth section) turns on posts that stand a block
+  proud of the wall, windows set one block back, a stair ledge at the foot and under the eave, and
+  a little stair hood over each window; shutters (open trapdoors beside each window) are one more
+  tick. **Area** (A) mode:
   drag a rectangle to place a whole floor, erase or repaint every block on that layer in one step
   (Shift keeps it square). **Circle** mode does the same with the circle or oval that fits the
   rectangle. A placed area becomes a **fill**: one object (listed under Fills) that you select, move,

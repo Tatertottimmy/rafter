@@ -944,3 +944,23 @@ test('a box one block deep still gets a south door', () => {
   for (let x = 1; x < 6; x++) if (!get(g, x, 1, 0) && !get(g, x, 2, 0)) open.push(x);
   assert.deepEqual(open, [3]);
 });
+
+test('depth: posts stand proud, windows sit back, ledges, hoods and shutters', () => {
+  const det = { windows: true, winWidth: 2, winHeight: 2, winGap: 3, winSill: 2, corners: true, trimMat: 'dark_oak', cornerMat: 'spruce_log', baseMat: 'cobblestone',
+    pilasters: true, pilasterGap: 0, recess: true, plinth: true, cornice: true, hoods: true, shutters: true };
+  const g = buildGrid(design([box({ w: 17, d: 7, wallH: 7, roof: { overhang: 0 }, details: det })]));
+  // Corner post wraps the outside corner (south-east).
+  for (const [x, z] of [[17, 6], [16, 7], [17, 7]]) assert.equal(get(g, x, 3, z).path, 'details.cornerMat', `post at ${x},${z}`);
+  // South windows: glass moved one cell in, the face cell is open.
+  assert.equal(get(g, 3, 2, 6), undefined);
+  assert.equal(get(g, 3, 2, 5).kind, 'pane');
+  // Hood above, shutters either side, plinth at the foot facing the wall, cornice under the eave.
+  assert.deepEqual([get(g, 3, 4, 7).kind, get(g, 3, 4, 7).props.half], ['stair', 'bottom']);
+  assert.equal(get(g, 1, 2, 7).kind, 'trapdoor');
+  assert.equal(get(g, 1, 2, 7).props.open, 'true');
+  assert.deepEqual([get(g, 8, 0, 7).kind, get(g, 8, 0, 7).props.facing], ['stair', 'north']);
+  assert.deepEqual([get(g, 8, 6, 7).kind, get(g, 8, 6, 7).props.half], ['stair', 'top']);
+  // Off by default: nothing outside the wall.
+  const flat = buildGrid(design([box({ w: 17, d: 7, wallH: 7, roof: { overhang: 0 }, details: { windows: true } })]));
+  assert.equal(get(flat, 8, 0, 7), undefined);
+});

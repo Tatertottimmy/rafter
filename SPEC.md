@@ -345,3 +345,15 @@ Page contract (the artifact host wraps the file in its own doctype/head/body): w
   others put blocks (role 'stamp', src = stamp id, path 'asset'). Stamps of a missing asset are
   dropped. The Asset Studio is a second Viewer showing a sample wall (z = 0) with the asset's
   cells applied; clicks edit the asset's cells.
+
+- **Depth** (box `details`: `pilasters`, `pilasterGap` 0–16, `recess`, `plinth`, `cornice`, `hoods`,
+  `shutters`, all off by default). Runs after every box's walls, before floors, in the cells just
+  outside each wall face, never where another box stands (its footprint below its eave) or where
+  anything is already built. Pilasters: cornerMat full blocks one cell out at the corners (plus the
+  outside diagonal) and every `pilasterGap` columns that have no opening in or beside them. Recess:
+  each window block moves one cell in. Plinth: baseMat stairs (back to the wall) at baseY, not in
+  front of a doorway. Cornice: trimMat upside-down stairs at the top wall row (one lower if taken).
+  Hoods: trimMat bottom stairs above each window column's top glass. Shutters: open trapdoors
+  (trimMat, else spruce) in front of the columns either side of each window. The Depth tool writes
+  ordinary hand edits: push in = erase (or drop the placed edit) + the same block one cell back;
+  pull out = the same block one cell in front.
