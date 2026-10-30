@@ -891,6 +891,7 @@ export class Viewer {
    * Nodes keep the same size on screen however far the camera is.
    */
   _addNodes(obj, type, b, accent) {
+    if (obj.locked) return; // locked: selectable, but no handles to move it with
     const ok = resizableSides(type, obj);
     const faceGeo = new THREE.BoxGeometry(1, 1, 1), cornerGeo = new THREE.SphereGeometry(0.55, 14, 8);
     const mid = { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2, z: (b.z0 + b.z1) / 2 };
@@ -970,6 +971,7 @@ export class Viewer {
    * object's centre. Drawn on top of everything so it shows through walls and roofs.
    */
   _addMoveGizmo(obj, cx, cy, cz) {
+    if (obj.locked) return; // locked: selectable, but no handles to move it with
     const len = 2.6;
     const axes = [
       ['x', 0xe5484d, new THREE.Vector3(1, 0, 0)],
@@ -1031,6 +1033,7 @@ export class Viewer {
 
   /** Round rotate knob off the north-west corner (cx0, cz0) at height y, joined by a stalk. */
   _addRotateHandle(obj, objType, cx0, cz0, y, accent, lineMat) {
+    if (obj.locked) return; // locked: selectable, but no handles to move it with
     const kx = cx0 - 1.6, kz = cz0 - 1.6;
     const stalk = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(cx0, y + 0.02, cz0), new THREE.Vector3(kx, y + 0.02, kz)]);
     const ln = new THREE.Line(stalk, new THREE.LineBasicMaterial({ color: accent, depthTest: false, transparent: true, opacity: 0.35 })); ln.renderOrder = 10;
@@ -1153,7 +1156,7 @@ export class Viewer {
     const hit = this._pick(e);
     if (hit && (hit.type === 'axis' || hit.type === 'face')) {
       const found = this._findObject(hit.id);
-      if (!found) return;
+      if (!found || found.obj.locked) return;
       e.stopImmediatePropagation();
       e.preventDefault();
       const d = { mode: hit.type, axis: hit.axis, origin: hit.origin || hit.pos, sides: hit.sides, id: hit.id, objType: found.type, start: JSON.parse(JSON.stringify(found.obj)), last: 0, changed: false, pointerId: e.pointerId };
@@ -1197,7 +1200,7 @@ export class Viewer {
     const planeY = hit.type === 'handle' || hit.type === 'rotate' ? hit.y : hit.planeY ?? hit.baseY;
     const p0 = this._planePoint(e, planeY);
     const found = this._findObject(hit.id);
-    if (!p0 || !found) {
+    if (!p0 || !found || found.obj.locked) {
       // No plane to drag on from this angle: still select it.
       this.controls.enabled = true;
       this._down = null;

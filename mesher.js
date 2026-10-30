@@ -69,7 +69,14 @@ export const WALL_BOXES = {
   wall_arm_tall: [[0.25, 0, 0, 0.75, 1, 0.25]],
   pane_post: [[0.4375, 0, 0.4375, 0.5625, 1, 0.5625]],
   pane_arm: [[0.4375, 0, 0, 0.5625, 1, 0.4375]],
+  // Doors and trapdoors: a 3/16 panel against the north side (turned to its side), or flat.
+  panel: [[0, 0, 0, 1, 1, 0.1875]],
+  panel_bottom: [[0, 0, 0, 1, 0.1875, 1]],
+  panel_top: [[0, 0.8125, 0, 1, 1, 1]],
 };
+const CW = { north: 'east', east: 'south', south: 'west', west: 'north' };
+const CCW = { north: 'west', west: 'south', south: 'east', east: 'north' };
+const OPP = { north: 'south', south: 'north', east: 'west', west: 'east' };
 
 export function boxVolume(boxes) {
   return boxes.reduce((s, [x0, y0, z0, x1, y1, z1]) => s + (x1 - x0) * (y1 - y0) * (z1 - z0), 0);
@@ -108,6 +115,16 @@ export function classifyBlock(block) {
       const out = [{ kind: 'pane_post', angle: 0 }];
       for (const d of DIRS) if (p[d] === 'true') out.push({ kind: 'pane_arm', angle: FACING_ANGLE[d] });
       return out;
+    }
+    case 'door': {
+      // Closed: on the side away from its facing. Open: swung round to the hinge side.
+      const f = DIRS.includes(p.facing) ? p.facing : 'north';
+      const side = p.open !== 'true' ? OPP[f] : p.hinge === 'right' ? CW[f] : CCW[f];
+      return [{ kind: 'panel', angle: FACING_ANGLE[side] }];
+    }
+    case 'trapdoor': {
+      if (p.open === 'true') return [{ kind: 'panel', angle: FACING_ANGLE[OPP[DIRS.includes(p.facing) ? p.facing : 'north']] }];
+      return [{ kind: p.half === 'top' ? 'panel_top' : 'panel_bottom', angle: 0 }];
     }
     default:
       return [{ kind: 'full', angle: 0 }];
@@ -235,7 +252,7 @@ const shapeCache = new Map();
 export function shapeBoxes(b) {
   if (b.kind === 'full') return FULL_BOXES;
   const p = b.props || {};
-  const k = b.kind + '|' + p.type + '|' + p.facing + '|' + p.half + '|' + p.shape + '|' + p.up + '|' + p.north + '|' + p.east + '|' + p.south + '|' + p.west;
+  const k = b.kind + '|' + p.type + '|' + p.facing + '|' + p.half + '|' + p.shape + '|' + p.up + '|' + p.north + '|' + p.east + '|' + p.south + '|' + p.west + '|' + p.open + '|' + p.hinge;
   let boxes = shapeCache.get(k);
   if (!boxes) { boxes = blockBoxes(b); shapeCache.set(k, boxes); }
   return boxes;

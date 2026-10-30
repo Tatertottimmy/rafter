@@ -83,7 +83,7 @@ const DYES = [
 export const FAMILIES = {};
 
 // ---- Wood planks (slab + stairs) -------------------------------------------------
-for (const [key, label, color] of WOODS) FAMILIES[key] = planks(key, label + ' planks', color);
+for (const [key, label, color] of WOODS) FAMILIES[key] = { ...planks(key, label + ' planks', color), door: MC + key + '_door', trapdoor: MC + key + '_trapdoor' };
 
 // ---- Stone family --------------------------------------------------------------
 Object.assign(FAMILIES, {
@@ -216,6 +216,8 @@ for (const [pre, label, color] of COPPER) {
   const blockId = pre ? pre + 'copper' : 'copper_block';
   FAMILIES[blockId] = fullOnly((label || '') + (label ? 'copper' : 'Block of copper'), blockId, color, 'Copper', 'metal');
   FAMILIES['waxed_' + blockId] = fullOnly('Waxed ' + (label ? lc + 'copper' : 'block of copper'), 'waxed_' + blockId, color, 'Copper', 'metal');
+  FAMILIES[blockId].door = MC + pre + 'copper_door'; FAMILIES[blockId].trapdoor = MC + pre + 'copper_trapdoor';
+  FAMILIES['waxed_' + blockId].door = MC + 'waxed_' + pre + 'copper_door'; FAMILIES['waxed_' + blockId].trapdoor = MC + 'waxed_' + pre + 'copper_trapdoor';
   FAMILIES[pre + 'chiseled_copper'] = fullOnly((label || '') + (label ? 'chiseled copper' : 'Chiseled copper'), pre + 'chiseled_copper', color, 'Copper', 'chiseled');
   FAMILIES[pre + 'copper_grate'] = { ...fullOnly((label || '') + (label ? 'copper grate' : 'Copper grate'), pre + 'copper_grate', color, 'Copper', 'grate'), transparent: true };
 }
@@ -231,6 +233,7 @@ for (const [key, name, color] of [
   ['coal_block', 'Block of coal', '#101010'], ['netherite_block', 'Block of netherite', '#433f41'], ['amethyst_block', 'Block of amethyst', '#8562be'],
   ['raw_iron_block', 'Block of raw iron', '#a6886b'], ['raw_copper_block', 'Block of raw copper', '#9a6a4f'], ['raw_gold_block', 'Block of raw gold', '#dda92e'],
 ]) FAMILIES[key] = fullOnly(name, key, color, 'Mineral blocks', key.startsWith('raw_') || key === 'amethyst_block' ? 'stone' : 'metal');
+FAMILIES.iron_block.door = MC + 'iron_door'; FAMILIES.iron_block.trapdoor = MC + 'iron_trapdoor';
 
 // ---- Ores (stone/deepslate/netherrack with flecks) ----------------------------------
 for (const [key, label, fleck] of [

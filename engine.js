@@ -46,7 +46,7 @@ export const MIX_MAX = 6; // blocks a surface's variation can mix in
 export const MIX_KEYS = { wall: ['wallMix', 'wallMix2', 'wallMix3', 'wallMix4', 'wallMix5', 'wallMix6'], roof: ['roofMix', 'roofMix2', 'roofMix3', 'roofMix4', 'roofMix5', 'roofMix6'] };
 export const VARIATION_DEFAULTS = { wall: 0, roof: 0, style: 'patches', wallMixCount: 2, roofMixCount: 2, ...Object.fromEntries([...MIX_KEYS.wall, ...MIX_KEYS.roof].map((k) => [k, ''])), seed: 1 };
 // Hand edits: paint keeps the existing block's shape, place puts a new block, erase clears.
-export const EDIT_SHAPES = ['paint', 'full', 'slab', 'stair', 'pane', 'erase'];
+export const EDIT_SHAPES = ['paint', 'full', 'slab', 'stair', 'pane', 'door', 'trapdoor', 'erase'];
 /** Block shapes a fill (a solid rectangle of one block) can be made of. */
 export const FILL_SHAPES = ['full', 'slab', 'stair', 'pane'];
 
@@ -329,6 +329,10 @@ function validateEdits(list, rel) {
     if (shape === 'stair') out.facing = oneOf(e.facing, DIRS, 'north');
     if (shape === 'full' && e.axis) out.axis = oneOf(e.axis, ['x', 'y', 'z'], 'y');
     if (shape === 'pane') out.axis = oneOf(e.axis, ['x', 'z'], 'x');
+    // Doors stand two blocks tall from this cell; facing is the way you walk in through them.
+    if (shape === 'door' || shape === 'trapdoor') { out.facing = oneOf(e.facing, DIRS, 'north'); if (e.open) out.open = true; }
+    if (shape === 'door') out.hinge = oneOf(e.hinge, ['left', 'right'], 'left');
+    if (shape === 'trapdoor') out.half = oneOf(e.half, ['bottom', 'top'], 'bottom');
     const k = blockKey(out.x, out.y, out.z);
     byCell.delete(k);
     byCell.set(k, out);
@@ -571,10 +575,36 @@ function stairBlock(mat, facing, half, role) {
   if (!f.stairs) return fullBlock(mat, role);
   return { id: f.stairs, props: { facing, half, shape: 'straight', waterlogged: 'false' }, kind: 'stair', mat, role, color: f.color };
 }
+/** One half of a door (`half` "lower" / "upper"); a full block if the family has no door. */
+function doorBlock(mat, facing, half, hinge, open, role) {
+  const f = fam(mat);
+  if (!f.door) return fullBlock(mat, role);
+  return { id: f.door, props: { facing, half, hinge, open: open ? 'true' : 'false', powered: 'false' }, kind: 'door', mat, role, color: f.color };
+}
+function trapdoorBlock(mat, facing, half, open, role) {
+  const f = fam(mat);
+  if (!f.trapdoor) return slabBlock(mat, half, role);
+  return { id: f.trapdoor, props: { facing, half, open: open ? 'true' : 'false', powered: 'false', waterlogged: 'false' }, kind: 'trapdoor', mat, role, color: f.color };
+}
 function wallBlock(mat, conns, role) {
   const f = fam(mat);
   if (!f.wall) return fullBlock(mat, role);
   return { id: f.wall, props: { up: 'true', north: conns.north, south: conns.south, east: conns.east, west: conns.west, waterlogged: 'false' }, kind: 'wall', mat, role, color: f.color };
+}
+
+/** The block(s) a placed cell or asset cell makes, as [dy, block]: a door takes two cells. */
+function shapedBlocks(c, role) {
+  switch (c.shape) {
+    case 'slab': return [[0, slabBlock(c.mat, c.half, role)]];
+    case 'stair': return [[0, stairBlock(c.mat, c.facing, c.half, role)]];
+    case 'pane': return [[0, paneBlock(c.mat, c.axis, role)]];
+    case 'trapdoor': return [[0, trapdoorBlock(c.mat, c.facing, c.half, c.open, role)]];
+    case 'door': {
+      const lo = doorBlock(c.mat, c.facing, 'lower', c.hinge, c.open, role);
+      return lo.kind === 'door' ? [[0, lo], [1, doorBlock(c.mat, c.facing, 'upper', c.hinge, c.open, role)]] : [[0, lo]];
+    }
+    default: return [[0, fullBlock(c.mat, role, c.axis)]];
+  }
 }
 
 /** Remember which object (and which of its material fields) produced a block. */
@@ -585,7 +615,8 @@ export function reskin(blk, mat) {
   const f = FAMILIES[mat];
   if (!f) return null;
   const id = blk.kind === 'full' ? f.full : blk.kind === 'slab' ? f.slab : blk.kind === 'stair' ? f.stairs
-    : blk.kind === 'wall' ? f.wall : blk.kind === 'pane' ? f.pane : null;
+    : blk.kind === 'wall' ? f.wall : blk.kind === 'pane' ? f.pane : blk.kind === 'door' ? f.door
+    : blk.kind === 'trapdoor' ? f.trapdoor : null;
   if (!id) return null;
   let props = { ...blk.props };
   if (blk.kind === 'full') {
@@ -793,7 +824,59 @@ function roofTiers(design, regions) {
 function boxSurface(b, reg, cx, cz) {
   const s = baseSurface(b, reg, cx, cz) + cornerLift(b.roof, reg, cx, cz);
   // Chopped top: the top `cut` layers of the roof come off and it finishes flat there.
-  return b.roof.cut > 0 ? Math.min(s, chopHeight(b, reg)) : s;
+  const c = b.roof.cut > 0 ? Math.min(s, chopHeight(b, reg)) : s;
+  const lim = skirtLimit(reg, cx, cz);
+  return lim < c ? lim : c;
+}
+/**
+ * Skirts: where an upper storey stands inside a lower box's walls and the lower roof would
+ * climb past the upper eave (burying the upper walls and poking through its eaves), the lower
+ * roof stops one block under that eave and runs flat to the walls: a deck. Outside the upper
+ * roof it climbs back at its own pitch, so only the part under the upper eave is touched.
+ */
+const skirtCache = new WeakMap(); // lower box's region -> [{x0, x1, z0, z1, cap, rise}]
+function skirtLimit(reg, cx, cz) {
+  const list = skirtCache.get(reg);
+  if (!list) return Infinity;
+  let lim = Infinity;
+  for (const k of list) {
+    const d = Math.max(k.x0 - cx, cx - k.x1, k.z0 - cz, cz - k.z1, 0);
+    lim = Math.min(lim, k.cap + d * k.rise);
+  }
+  return lim;
+}
+function onSkirt(reg, cx, cz, s) {
+  const list = skirtCache.get(reg);
+  return !!list && list.some((k) => cx >= k.x0 && cx <= k.x1 && cz >= k.z0 && cz <= k.z1 && s >= k.cap - EPS);
+}
+function setSkirts(design, regions, tierOf) {
+  design.boxes.forEach((B, bi) => {
+    if (!B.walls) return;
+    const rb = regions[bi];
+    let eave = Infinity;
+    for (let z = rb.z0; z <= rb.z1; z++) for (let x = rb.x0; x <= rb.x1; x++) {
+      if (x >= B.x && x < B.x + B.w && z >= B.z && z < B.z + B.d) continue;
+      eave = Math.min(eave, roundHalf(boxSurface(B, rb, x, z)));
+    }
+    if (!Number.isFinite(eave)) eave = B.baseY + B.wallH;
+    design.boxes.forEach((A, ai) => {
+      if (tierOf[ai] >= tierOf[bi]) return;
+      const inside = B.x > A.x && B.z > A.z && B.x + B.w < A.x + A.w && B.z + B.d < A.z + A.d;
+      if (!inside) return;
+      const ra = regions[ai];
+      const cap = Math.max(A.baseY + A.wallH, Math.floor(eave) - 2);
+      // Only when A's roof climbs past B's eave at B's walls: a roof that only meets the eave stays.
+      let over = false;
+      for (let z = B.z; z < B.z + B.d && !over; z++) for (let x = B.x; x < B.x + B.w; x++) {
+        if (x !== B.x && x !== B.x + B.w - 1 && z !== B.z && z !== B.z + B.d - 1) continue;
+        if (roundHalf(boxSurface(A, ra, x, z)) > eave + EPS) { over = true; break; }
+      }
+      if (!over) return;
+      const list = skirtCache.get(ra) ?? [];
+      list.push({ x0: rb.x0, x1: rb.x1, z0: rb.z0, z1: rb.z1, cap, rise: Math.max(A.roof.rise, 0.5) });
+      skirtCache.set(ra, list);
+    });
+  });
 }
 /** Surface height a chopped roof is cut to: `cut` layers below its peak, never under the eave. */
 const chopCache = new WeakMap();
@@ -973,6 +1056,7 @@ export function buildGrid(input) {
   // own roof layer instead of joining that roof's height map, so the lower roof runs on
   // underneath, right up to its walls. Boxes on one tier merge as before (L-shapes, dormers).
   const tierOf = roofTiers(design, regions);
+  setSkirts(design, regions, tierOf);
   const tiers = [...new Set(tierOf)].sort((a, b) => a - b);
   const roofMins = tiers.map(() => new Map()); // per tier: colKey -> lowest layer holding a roof block
   let roofMin = roofMins[0];
@@ -1071,7 +1155,7 @@ export function buildGrid(input) {
     dec.fillFrom = isHalf(fillMin) ? Math.floor(fillMin) : fillMin;
     dec.cx = cx; dec.cz = cz; dec.bi = bi;
     // On the flat of a chopped roof: the cap.
-    if (b.roof.cut > 0 && dec.kind === 'full' && s >= chopHeight(b, reg) - EPS) dec.cap = true;
+    if (dec.kind === 'full' && ((b.roof.cut > 0 && s >= chopHeight(b, reg) - EPS) || onSkirt(reg, cx, cz, s))) dec.cap = true;
     decisions.set(k, dec);
   }
 
@@ -1423,12 +1507,8 @@ export function buildGrid(input) {
     for (const c of stampCells(asset, st)) {
       if (c.y < -64 || c.y > 319) continue;
       if (c.shape === 'erase') { blocks.delete(blockKey(c.x, c.y, c.z)); continue; }
-      let blk;
-      if (c.shape === 'slab') blk = slabBlock(c.mat, c.half, 'stamp');
-      else if (c.shape === 'stair') { blk = stairBlock(c.mat, c.facing, c.half, 'stamp'); editedStairs = true; }
-      else if (c.shape === 'pane') blk = paneBlock(c.mat, c.axis, 'stamp');
-      else blk = fullBlock(c.mat, 'stamp', c.axis);
-      put(c.x, c.y, c.z, tag(blk, st.id, 'asset'));
+      if (c.shape === 'stair') editedStairs = true;
+      for (const [dy, blk] of shapedBlocks(c, 'stamp')) put(c.x, c.y + dy, c.z, tag(blk, st.id, 'asset'));
     }
   }
   for (const e of edits) {
@@ -1442,14 +1522,12 @@ export function buildGrid(input) {
       put(e.x, e.y, e.z, nb);
       continue;
     }
-    let blk;
-    if (e.shape === 'slab') blk = slabBlock(e.mat, e.half, 'placed');
-    else if (e.shape === 'stair') { blk = stairBlock(e.mat, e.facing, e.half, 'placed'); editedStairs = true; }
-    else if (e.shape === 'pane') blk = paneBlock(e.mat, e.axis, 'placed');
-    else blk = fullBlock(e.mat, 'placed', e.axis);
-    blk.src = e.owner || null;
-    blk.edited = true;
-    put(e.x, e.y, e.z, blk);
+    if (e.shape === 'stair') editedStairs = true;
+    for (const [dy, blk] of shapedBlocks(e, 'placed')) {
+      blk.src = e.owner || null;
+      blk.edited = true;
+      put(e.x, e.y + dy, e.z, blk);
+    }
   }
   if (editedStairs || edits.length || pillarStairs || design.stamps.length) {
     for (const blk of blocks.values()) {
@@ -1473,11 +1551,12 @@ export function buildGrid(input) {
 // ---------------------------------------------------------------------------------
 // Material totals (group by block.id only)
 // ---------------------------------------------------------------------------------
-const KIND_LABEL = { full: 'block', slab: 'slab', stair: 'stairs', wall: 'wall', pane: 'pane' };
+const KIND_LABEL = { full: 'block', slab: 'slab', stair: 'stairs', wall: 'wall', pane: 'pane', door: 'door', trapdoor: 'trapdoor' };
 
 export function materialTotals(grid) {
   const totals = new Map();
   for (const blk of grid.blocks.values()) {
+    if (blk.kind === 'door' && blk.props.half === 'upper') continue; // one door item fills both cells
     let t = totals.get(blk.id);
     if (!t) {
       const f = FAMILIES[blk.mat];

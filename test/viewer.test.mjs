@@ -292,6 +292,16 @@ test('snap points and centre-out spans', () => {
   assert.deepEqual(V.centreSpan(5, 5.1), [4, 5]);      // smallest even span
 });
 
+test('door and trapdoor panels sit on the right side of their cell', () => {
+  const door = (p) => V.blockBoxes({ kind: 'door', props: p })[0].map((v) => Math.round(v * 16));
+  assert.deepEqual(door({ facing: 'north', open: 'false' }), [0, 0, 13, 16, 16, 16]);  // closed: away from its facing
+  assert.deepEqual(door({ facing: 'north', open: 'true', hinge: 'right' }), [13, 0, 0, 16, 16, 16]);
+  assert.deepEqual(door({ facing: 'north', open: 'true', hinge: 'left' }), [0, 0, 0, 3, 16, 16]);
+  const td = (p) => V.blockBoxes({ kind: 'trapdoor', props: p })[0].map((v) => Math.round(v * 16));
+  assert.deepEqual(td({ facing: 'east', half: 'top', open: 'false' }), [0, 13, 0, 16, 16, 16]);
+  assert.deepEqual(td({ facing: 'east', open: 'true' }), [0, 0, 0, 3, 16, 16]);
+});
+
 if (haveBlocks) {
   test('blocks.js: every family pattern is a known pattern name', async () => {
     const { FAMILIES } = await import('../blocks.js');

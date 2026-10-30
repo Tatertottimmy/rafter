@@ -268,6 +268,16 @@ Page contract (the artifact host wraps the file in its own doctype/head/body): w
   two-tone textures: ores, glazed terracotta), `transparent: true` (glass, ice, grates: see-through in the viewer).
   `GROUP_ORDER` orders the picker groups. New patterns: glass, ore, leaves, glazed, grainy, metal, chiseled, grate.
 - **Block kind `pane`**: props `{east,west,north,south,waterlogged}`; viewer draws a thin post plus arms.
+- **Block kinds `door` / `trapdoor`**: wood, iron and copper families carry `door` / `trapdoor` ids. Edit and asset
+  cells take `shape: "door"` (facing, hinge left/right, open; builds lower + upper halves, the upper one cell up) or
+  `"trapdoor"` (facing, half, open). A door's panel is 3/16 thick on the side away from its facing when closed, on the
+  hinge side when open (Minecraft's shapes); a trapdoor lies flat in its half, or stands on the side away from its
+  facing when open. Families without them build full blocks (doors) or slabs (trapdoors). Materials count a door once.
+- **Lock**: any object may carry `locked: true`. The viewer shows no handles for it and won't drag it; the UI blocks
+  nudging, turning, scaling it alone and deleting it, and greys out its position and size fields.
+- **Skirts**: when an upper storey stands inside a lower box's walls (on a higher roof tier) and the lower roof
+  would climb past the upper storey's lowest eave at its walls, the lower roof is held two blocks under that eave
+  under the upper roof (a flat deck, marked as a cap), climbing back at its own pitch beyond it.
 - **Curved roofs** (`roof.profile`): surface = E + rise·D·f(d/D), D = the full run of that slope (same total height as
   straight). f: rounded = sin(tπ/2), flared = 1−cos(tπ/2), bell = (1−cos tπ)/2. Off-region neighbours extrapolate with
   the first step's slope clamped to 0.5..rise.

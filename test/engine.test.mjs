@@ -894,3 +894,32 @@ test('assets: placed on a wall facing out, cutting holes and adding blocks; temp
   assert.equal(validateDesign({ ...d, assets: [] }).stamps.length, 0);
   assert.deepEqual(rotatePatch('stamp', { facing: 'south' }, 1), { facing: 'west' });
 });
+
+test('doors and trapdoors: two-block doors, trapdoor states, fallbacks, one item per door', () => {
+  const edits = [
+    { x: 0, y: 0, z: -3, shape: 'door', mat: 'oak', facing: 'north', hinge: 'right', open: true },
+    { x: 2, y: 0, z: -3, shape: 'trapdoor', mat: 'iron_block', facing: 'east', half: 'top' },
+    { x: 4, y: 0, z: -3, shape: 'door', mat: 'stone' },
+  ];
+  const g = buildGrid(design([box()], { edits }));
+  const lo = get(g, 0, 0, -3), hi = get(g, 0, 1, -3);
+  assert.equal(lo.id, 'minecraft:oak_door');
+  assert.deepEqual([lo.props.half, hi.props.half, lo.props.hinge, lo.props.open], ['lower', 'upper', 'right', 'true']);
+  const td = get(g, 2, 0, -3);
+  assert.equal(td.id, 'minecraft:iron_trapdoor');
+  assert.deepEqual([td.props.facing, td.props.half, td.props.open], ['east', 'top', 'false']);
+  assert.equal(get(g, 4, 0, -3).kind, 'full', 'stone has no door');
+  assert.equal(materialTotals(g).find((t) => t.id === 'minecraft:oak_door').count, 1);
+});
+
+test('a lower roof that would bury an upper storey stops under its eave', () => {
+  const hall = box({ x: -16, z: -12, w: 45, d: 33, baseY: 3, wallH: 12, roof: { type: 'hip', axis: 'x', overhang: 6, profile: 'flared' } });
+  const up = box({ id: 'b2', x: -4, z: -3, w: 21, d: 15, baseY: 15, wallH: 12, roof: { type: 'irimoya', axis: 'x', overhang: 6, profile: 'flared', material: 'dark_oak' } });
+  const g = buildGrid(design([hall, up]));
+  // Under the upper eave the hall roof never comes within a block of it.
+  let worst = -Infinity;
+  for (const b of g.blocks.values()) if (b.src === 'b1' && b.role === 'roof' && b.x >= -10 && b.x <= 22 && b.z >= -9 && b.z <= 17) worst = Math.max(worst, b.y);
+  let eave = Infinity;
+  for (const b of g.blocks.values()) if (b.src === 'b2' && b.role === 'roof') eave = Math.min(eave, b.y);
+  assert.ok(worst < eave - 1, `hall roof top ${worst} under upper eave ${eave}`);
+});

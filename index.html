@@ -245,6 +245,17 @@
   .obj img { width: 22px; height: 22px; display: block; image-rendering: pixelated; }
   .obj .obj-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .obj .obj-meta { font-family: var(--font-mono); font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 14ch; }
+  .fields input:disabled, .fields select:disabled { opacity: 0.5; cursor: not-allowed; }
+  .obj-row { display: flex; align-items: center; gap: 2px; min-width: 0; }
+  .obj-row .obj { flex: 1; }
+  .obj-lock {
+    flex: none; width: 26px; height: 26px; display: grid; place-items: center; padding: 0;
+    border: 1px solid transparent; border-radius: var(--radius); background: none; color: var(--muted);
+    cursor: pointer; opacity: 0.45;
+  }
+  .obj-row:hover .obj-lock, .obj-lock:focus-visible { opacity: 1; }
+  .obj-lock:hover { background: var(--soft); color: var(--ink, inherit); }
+  .obj-lock.on { opacity: 1; color: var(--accent); }
   .empty { color: var(--muted); font-style: italic; padding: 6px 4px; }
 
   /* properties */
@@ -711,6 +722,8 @@
             <button type="button" data-shape="slab" aria-pressed="false">Slab</button>
             <button type="button" data-shape="stair" aria-pressed="false">Stairs</button>
             <button type="button" data-shape="pane" aria-pressed="false" title="Glass pane: runs along the wall you click">Pane</button>
+            <button type="button" data-shape="door" aria-pressed="false" title="Door (wood, iron or copper): two blocks tall, faces the way you look">Door</button>
+            <button type="button" data-shape="trapdoor" aria-pressed="false" title="Trapdoor: hinged on the block you click, or flat on a floor">Trapdoor</button>
           </div>
           <button type="button" class="btn small" id="btnClearEdits" hidden title="Remove every hand-placed, painted and erased block">Clear edits</button>
         </div>
@@ -830,6 +843,8 @@
             <button type="button" data-sshape="slab" aria-pressed="false">Slab</button>
             <button type="button" data-sshape="stair" aria-pressed="false">Stairs</button>
             <button type="button" data-sshape="pane" aria-pressed="false">Pane</button>
+            <button type="button" data-sshape="door" aria-pressed="false">Door</button>
+            <button type="button" data-sshape="trapdoor" aria-pressed="false">Trapdoor</button>
           </div>
           <button type="button" class="matbtn hud brush" id="studioBrush" title="Block to build with"><img alt="" width="28" height="28"><span class="mat-name"></span><span class="caret">▼</span></button>
           <span class="hud check studio-wall"><input type="checkbox" id="studioWallToggle" checked><label for="studioWallToggle">Sample wall</label></span>

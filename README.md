@@ -65,11 +65,14 @@ No build step is needed to develop: serve the folder with any static web server
   blending into each other rather than meeting in lines.
 - **Assets** (top bar) opens the Asset Studio, a separate 3D builder for parts like windows,
   doors, balconies and lamps, saved in the project's gallery. Build against a sample wall: Erase
-  cuts holes into it, blocks in its layer replace it, blocks in front stick out. Ten starter
+  cuts holes into it, blocks in its layer replace it, blocks in front stick out. Eleven starter
   assets are one click away (Add a starter). "Place on building" (or the Asset tool) then
   places it: point at the side of any wall and it turns to face out of it; click to place.
   Placed copies stay linked to their asset, so editing it updates every copy; each copy can be
   selected, moved, turned (R) or deleted like any object.
+- **Lock**: the lock beside each object in the list pins it in place. A locked object can still be
+  selected and restyled, but it can't be dragged, resized, nudged, turned, scaled or deleted until
+  you unlock it.
 - **Scale…** (Objects panel) makes the whole build, or just the selected object, bigger or
   smaller by any factor (×½ to ×8). Edges scale about the build's centre at ground level, so
   shared walls stay shared, gaps grow in proportion and roofs keep their pitch; overhangs,
@@ -107,8 +110,10 @@ No build step is needed to develop: serve the folder with any static web server
   (block / slab / wall), and under-eave soffit stairs are per box.
 - **Tools** (bar at the bottom of the 3D view): **Select** (V) moves and edits objects. **Paint** (B)
   repaints the whole wall, roof, trim, post or foundation you click, or just one block in
-  "One block" mode. **Place** (P) puts a block, slab or stairs against the face you click or on the
-  ground; stairs face the way you look, slabs go top or bottom by where you click. **Area** (A) mode:
+  "One block" mode. **Place** (P) puts a block, slab, stairs, pane, door or trapdoor against the face
+  you click or on the ground; stairs and doors face the way you look, slabs go top or bottom by where
+  you click, and a trapdoor clicked on a wall hangs open against it (on a floor it lies flat). Doors
+  come in every wood, iron and copper; select a placed door to open or close it or flip its hinge. **Area** (A) mode:
   drag a rectangle to place a whole floor, erase or repaint every block on that layer in one step
   (Shift keeps it square). **Circle** mode does the same with the circle or oval that fits the
   rectangle. A placed area becomes a **fill**: one object (listed under Fills) that you select, move,

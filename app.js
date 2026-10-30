@@ -483,6 +483,8 @@ const F = (x, y, z, mat, axis) => (axis ? { x, y, z, shape: 'full', mat, axis } 
 const ST = (x, y, z, mat, facing, half = 'bottom') => ({ x, y, z, shape: 'stair', mat, facing, half });
 const SL = (x, y, z, mat, half = 'bottom') => ({ x, y, z, shape: 'slab', mat, half });
 const CUT = (x, y, z = 0) => ({ x, y, z, shape: 'erase' });
+const DOOR = (x, y, z, mat, hinge = 'left') => ({ x, y, z, shape: 'door', mat, facing: 'north', hinge });
+const TD = (x, y, z, mat, facing, open = true, half = 'bottom') => ({ x, y, z, shape: 'trapdoor', mat, facing, half, ...(open ? { open: true } : {}) });
 const range = (a, b) => { const r = []; for (let i = a; i <= b; i++) r.push(i); return r; };
 const STARTER_ASSETS = [
   { name: 'Window with sill', cells: [P(0, 1, 0, 'glass'), P(0, 2, 0, 'glass'), ST(0, 0, 1, 'spruce', 'north', 'top')] },
@@ -492,7 +494,7 @@ const STARTER_ASSETS = [
     ...range(-1, 2).map((x) => SL(x, 0, 1, 'spruce', 'top')),
   ] },
   { name: 'Shuttered window', cells: [P(0, 1, 0, 'glass'), P(0, 2, 0, 'glass'), ST(0, 0, 1, 'dark_oak', 'north', 'top'),
-    F(-1, 1, 1, 'dark_oak'), F(-1, 2, 1, 'dark_oak'), F(1, 1, 1, 'dark_oak'), F(1, 2, 1, 'dark_oak')] },
+    TD(-1, 1, 1, 'dark_oak', 'south'), TD(-1, 2, 1, 'dark_oak', 'south'), TD(1, 1, 1, 'dark_oak', 'south'), TD(1, 2, 1, 'dark_oak', 'south')] },
   { name: 'Arched window', cells: [
     ...range(-1, 1).flatMap((x) => [P(x, 1, 0, 'glass'), P(x, 2, 0, 'glass'), P(x, 3, 0, 'glass')]),
     P(0, 4, 0, 'glass'), ST(-1, 4, 0, 'stone_bricks', 'west', 'top'), ST(1, 4, 0, 'stone_bricks', 'east', 'top'),
@@ -502,9 +504,14 @@ const STARTER_ASSETS = [
     ...range(-1, 1).flatMap((x) => [P(x, 1, 0, 'glass'), P(x, 2, 0, 'glass'), P(x, 3, 0, 'glass')]),
     P(0, 0, 0, 'glass'), P(0, 4, 0, 'glass'), P(-2, 2, 0, 'glass'), P(2, 2, 0, 'glass'),
   ] },
-  { name: 'Doorway with awning', cells: [CUT(0, 0), CUT(0, 1),
+  { name: 'Doorway with awning', cells: [DOOR(0, 0, 0, 'spruce'),
     ...range(0, 2).flatMap((y) => [F(-1, y, 0, 'stripped_spruce_log', 'y'), F(1, y, 0, 'stripped_spruce_log', 'y')]), F(0, 2, 0, 'stripped_spruce_log', 'x'),
     ...range(-1, 1).map((x) => ST(x, 3, 1, 'spruce', 'north')),
+  ] },
+  { name: 'Double door', cells: [DOOR(0, 0, 0, 'dark_oak', 'left'), DOOR(1, 0, 0, 'dark_oak', 'right'),
+    ...range(0, 2).flatMap((y) => [F(-1, y, 0, 'stripped_dark_oak_log', 'y'), F(2, y, 0, 'stripped_dark_oak_log', 'y')]),
+    ...range(-1, 2).map((x) => F(x, 2, 0, 'stripped_dark_oak_log', 'x')).filter((c) => c.x === 0 || c.x === 1),
+    ...range(-1, 2).map((x) => SL(x, 3, 1, 'dark_oak', 'bottom')),
   ] },
   { name: 'Balcony', cells: [CUT(0, 1), CUT(0, 2),
     ...range(-2, 2).flatMap((x) => [SL(x, 0, 1, 'spruce', 'top'), SL(x, 0, 2, 'spruce', 'top'), P(x, 1, 2, 'glass', 'x')]),
@@ -676,6 +683,7 @@ function studioAction(info, mods = {}) {
     if (studio.shape === 'stair') c.facing = info.facing;
     if (studio.shape === 'full' && FAMILIES[studio.brush].axis) c.axis = info.normal[0] ? 'x' : info.normal[2] ? 'z' : 'y';
     if (studio.shape === 'pane') c.axis = paneAxis(info);
+    if (studio.shape === 'door' || studio.shape === 'trapdoor') Object.assign(c, doorState(info));
     run = () => { const i = studioCellIndex(a, ...t); if (i >= 0) a.cells.splice(i, 1); a.cells.push(c); };
   } else if (studio.tool === 'paint') {
     if (!at) return;
@@ -781,7 +789,8 @@ function paletteUses(scopeId = null) {
     e.mat = to;
     // Keep the edit buildable: a shape the new block doesn't have becomes a full block.
     const f = FAMILIES[to];
-    if ((e.shape === 'stair' && !f.stairs) || (e.shape === 'slab' && !f.slab) || (e.shape === 'pane' && !f.pane)) { e.shape = 'full'; delete e.half; delete e.facing; delete e.axis; }
+    if ((e.shape === 'stair' && !f.stairs) || (e.shape === 'slab' && !f.slab) || (e.shape === 'pane' && !f.pane)
+      || (e.shape === 'door' && !f.door) || (e.shape === 'trapdoor' && !f.trapdoor)) { e.shape = 'full'; delete e.half; delete e.facing; delete e.axis; delete e.hinge; delete e.open; }
   };
   for (const b of d.boxes) {
     if (!inScope(b)) continue;
@@ -820,7 +829,7 @@ function paletteUses(scopeId = null) {
   // Assets: their blocks (changing one changes every placed copy).
   for (const a of d.assets || []) {
     if (scopeId && !d.stamps.some((t) => t.id === scopeId && t.asset === a.id)) continue;
-    for (const c of a.cells) if (c.mat) add(c.mat, 'Assets', c.shape === 'stair' ? 'stairs' : c.shape === 'slab' ? 'slab' : c.shape === 'pane' ? 'pane' : null, a.id, editSet(c));
+    for (const c of a.cells) if (c.mat) add(c.mat, 'Assets', c.shape === 'stair' ? 'stairs' : ['slab', 'pane', 'door', 'trapdoor'].includes(c.shape) ? c.shape : null, a.id, editSet(c));
   }
   if (state.grid) for (const blk of state.grid.blocks.values()) {
     if (scopeId && blk.src !== scopeId) continue;
@@ -836,6 +845,8 @@ function shapeWarning(mat, shape) {
   if (shape === 'slab' && !f.slab) return 'no slabs: uses full blocks';
   if (shape === 'pane' && !f.pane) return 'no pane: windows become full blocks';
   if (shape === 'wall' && !f.wall) return 'no wall block: uses full blocks';
+  if (shape === 'door' && !f.door) return 'no door: uses full blocks';
+  if (shape === 'trapdoor' && !f.trapdoor) return 'no trapdoor: uses slabs';
   return '';
 }
 
@@ -997,7 +1008,14 @@ function renderObjectList() {
         'aria-pressed': String(o.id === state.selectedId),
       }, iconEl(objectMaterial(f), 22), h('span', { class: 'obj-name', text: objectLabel(f) }), h('span', { class: 'obj-meta', text: meta }));
       btn.addEventListener('click', () => select(o.id));
-      ul.append(h('li', {}, btn));
+      const lock = h('button', {
+        class: 'obj-lock' + (o.locked ? ' on' : ''), id: 'lock-' + o.id, type: 'button',
+        'aria-pressed': String(!!o.locked), 'aria-label': (o.locked ? 'Unlock ' : 'Lock ') + objectLabel(f),
+        title: o.locked ? 'Locked: it can\'t be moved, resized, turned or deleted. Click to unlock.' : 'Lock in place',
+        html: o.locked ? LOCK_SVG : UNLOCK_SVG,
+      });
+      lock.addEventListener('click', () => toggleLock(o.id));
+      ul.append(h('li', { class: 'obj-row' }, btn, lock));
     }
   }
   if (!ul.children.length) ul.append(h('li', { class: 'empty', text: 'No objects yet. Add a box to start.' }));
@@ -1191,6 +1209,7 @@ const SCHEMA = {
     ] },
   ],
 };
+const LOCKED_KEYS = new Set(['x', 'z', 'w', 'd', 'baseY', 'wallH', 'h', 'x0', 'z0', 'x1', 'z1', 'facing', 'r', 'radius', 'size']);
 const getPath0 = (o, path) => path.reduce((a, k) => (a == null ? undefined : a[k]), o);
 // A box's texture fields ('variation', ...) live in the design's shared settings unless the box
 // keeps its own; getPath / setPath send them to the right place.
@@ -1233,12 +1252,22 @@ function renderProps(valuesOnly = false) {
     fs.append(grid);
     body.append(fs);
   }
+  if (f.obj.locked) {
+    // Where it is and how big stay as they are; looks (materials, roof, details) still change.
+    for (const group of SCHEMA[f.kind]) for (const field of group.fields) {
+      if (field.path.length !== 1 || !LOCKED_KEYS.has(field.path[0])) continue;
+      const el = $(fieldId(field));
+      if (el) { el.disabled = true; el.title = 'Locked'; }
+    }
+    body.prepend(h('p', { class: 'hint', id: 'prop-locked-note', text: 'Locked in place. Unlock it with the lock in the objects list to move or resize it.' }));
+  }
   if (f.kind === 'segment') {
     body.append(h('p', { class: 'hint', id: 'prop-segment-note', hidden: true, text: 'Not axis-aligned: the engine builds x0…x1 along z0.' }));
   }
   body.append(h('div', { class: 'props-actions' },
-    f.kind === 'pillar' ? null : h('button', { class: 'btn small', id: 'prop-rotate', type: 'button', text: 'Rotate 90°', title: 'Rotate clockwise (R, Shift+R for counter-clockwise). Or drag the round handle in the 3D view.', onclick: () => rotateSelected(1) }),
-    h('button', { class: 'btn danger small', id: 'prop-delete', type: 'button', text: 'Delete', onclick: () => requestDelete(f.obj.id) })));
+    h('button', { class: 'btn small', id: 'prop-lock', type: 'button', text: f.obj.locked ? 'Unlock' : 'Lock', title: 'Lock in place', onclick: () => toggleLock(f.obj.id) }),
+    f.kind === 'pillar' || f.obj.locked ? null : h('button', { class: 'btn small', id: 'prop-rotate', type: 'button', text: 'Rotate 90°', title: 'Rotate clockwise (R, Shift+R for counter-clockwise). Or drag the round handle in the 3D view.', onclick: () => rotateSelected(1) }),
+    h('button', { class: 'btn danger small', id: 'prop-delete', type: 'button', text: 'Delete', disabled: !!f.obj.locked, onclick: () => requestDelete(f.obj.id) })));
   body.append(clonePanel(() => cloneObject(f.obj.id)));
   syncPropValues();
 }
@@ -1510,7 +1539,9 @@ function syncBlockSelection() {
 function blockLabel(cell) {
   const ex = placedEdit(cell);
   if (!ex) return '?';
-  const shape = { slab: 'slab', stair: 'stairs', pane: 'pane' }[ex.edit.shape] || ''; // full blocks: the name alone
+  const e = ex.edit;
+  const shape = { slab: 'slab', stair: 'stairs', pane: 'pane', door: 'door', trapdoor: 'trapdoor' }[e.shape] || ''; // full blocks: the name alone
+  if (e.shape === 'door' || e.shape === 'trapdoor') return (famName(e.mat).replace(/ planks$|^Block of /, '') + ' ' + shape + (e.open ? ' (open)' : '')).trim();
   return (famName(ex.edit.mat) + ' ' + shape).trim();
 }
 function renderBlockProps() {
@@ -1523,7 +1554,8 @@ function renderBlockProps() {
   $('propsId').textContent = '';
   const rows = cells.slice(0, 12).map((c) => h('li', {},
     iconEl((placedEdit(c) || { edit: {} }).edit.mat, 20), h('span', { text: blockLabel(c) }), h('span', { class: 'n mono', text: c.join(', ') })));
-  const anyStair = cells.some((c) => { const ex = placedEdit(c); return ex && (ex.edit.shape === 'stair' || ex.edit.shape === 'pane'); });
+  const anyStair = cells.some((c) => { const ex = placedEdit(c); return ex && ['stair', 'pane', 'door', 'trapdoor'].includes(ex.edit.shape); });
+  const doors = cells.map(placedEdit).filter((ex) => ex && (ex.edit.shape === 'door' || ex.edit.shape === 'trapdoor'));
   body.replaceChildren(
     h('ul', { class: 'legend block-list' }, rows, cells.length > 12 ? h('li', { class: 'empty', text: '+ ' + (cells.length - 12) + ' more' }) : null),
     h('p', { class: 'hint', text: 'Drag to move, or use the arrow keys (Shift = 5) and Page Up / Page Down. Shift+click adds more blocks, Alt+drag selects a rectangle. Delete removes them' + (anyStair ? ', R turns stairs.' : '.') }),
@@ -1531,7 +1563,10 @@ function renderBlockProps() {
       h('button', { class: 'btn small', type: 'button', id: 'block-up', text: 'Up ↑', title: 'Raise one block (Page Up)', onclick: () => nudgeBlocks(0, 1, 0) }),
       h('button', { class: 'btn small', type: 'button', id: 'block-down', text: 'Down ↓', title: 'Lower one block (Page Down)', onclick: () => nudgeBlocks(0, -1, 0) }),
       fillable(cells) ? h('button', { class: 'btn small', type: 'button', id: 'block-fill', text: 'Make fill', title: 'Turn these blocks into one fill you can move and resize like a box', onclick: () => blocksToFill() }) : null,
-      anyStair ? h('button', { class: 'btn small', type: 'button', id: 'block-rotate', text: 'Turn', title: 'Turn stairs and panes (R)', onclick: () => rotateSelectedBlocks() }) : null,
+      anyStair ? h('button', { class: 'btn small', type: 'button', id: 'block-rotate', text: 'Turn', title: 'Turn stairs, panes and doors (R)', onclick: () => rotateSelectedBlocks() }) : null,
+      doors.length ? h('button', { class: 'btn small', type: 'button', id: 'block-open', text: doors[0].edit.open ? 'Close' : 'Open', title: 'Open or close doors and trapdoors', onclick: () => doorToggle('open') }) : null,
+      doors.some((ex) => ex.edit.shape === 'door') ? h('button', { class: 'btn small', type: 'button', id: 'block-hinge', text: 'Flip hinge', title: 'Hinge the door on its other side', onclick: () => doorToggle('hinge') }) : null,
+      doors.some((ex) => ex.edit.shape === 'trapdoor') ? h('button', { class: 'btn small', type: 'button', id: 'block-tdhalf', text: 'Top / bottom', title: 'Put the trapdoor in the top or bottom of its block', onclick: () => doorToggle('half') }) : null,
       h('button', { class: 'btn danger small', type: 'button', id: 'block-delete', text: cells.length === 1 ? 'Delete' : 'Delete ' + cells.length, onclick: () => deleteSelectedBlocks() })),
     clonePanel(() => cloneBlocks()));
 }
@@ -1621,7 +1656,7 @@ function endBlockDrag() {
 }
 function rotateSelectedBlocks() {
   const turn = { north: 'east', east: 'south', south: 'west', west: 'north' };
-  const stairs = state.selectedBlocks.map(placedEdit).filter((ex) => ex && (ex.edit.shape === 'stair' || ex.edit.shape === 'pane'));
+  const stairs = state.selectedBlocks.map(placedEdit).filter((ex) => ex && ['stair', 'pane', 'door', 'trapdoor'].includes(ex.edit.shape));
   if (!stairs.length) return;
   beginChange('turn-blocks');
   for (const ex of stairs) {
@@ -1631,7 +1666,43 @@ function rotateSelectedBlocks() {
   afterChange();
 }
 
+/** Open / close, flip the hinge, or move a trapdoor to the other half, on the selected doors. */
+function doorToggle(what) {
+  const doors = state.selectedBlocks.map(placedEdit).filter((ex) => ex && (ex.edit.shape === 'door' || ex.edit.shape === 'trapdoor'));
+  if (!doors.length) return;
+  beginChange(null);
+  const open = !doors[0].edit.open;
+  for (const { edit: e } of doors) {
+    if (what === 'open') { if (open) e.open = true; else delete e.open; }
+    else if (what === 'hinge' && e.shape === 'door') e.hinge = e.hinge === 'right' ? 'left' : 'right';
+    else if (what === 'half' && e.shape === 'trapdoor') e.half = e.half === 'top' ? 'bottom' : 'top';
+  }
+  afterChange();
+  renderBlockProps();
+}
+
+const LOCK_SVG = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>';
+const UNLOCK_SVG = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5 7V5a3 3 0 0 1 5.8-1" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
+/** Lock or unlock an object: locked ones stay put (no dragging, nudging, turning or deleting). */
+function toggleLock(id) {
+  const f = findObject(id);
+  if (!f) return;
+  beginChange(null);
+  if (f.obj.locked) delete f.obj.locked; else f.obj.locked = true;
+  afterChange();
+  renderObjectList();
+  if (state.selectedId === id) renderProps();
+  if (viewer) viewer.refreshSelection();
+  toast((f.obj.locked ? 'Locked ' : 'Unlocked ') + objectLabel(f));
+}
+/** True (and says so) when the object is locked. */
+function isLocked(f) {
+  if (!f || !f.obj.locked) return false;
+  toast(objectLabel(f) + ' is locked: unlock it in the objects list first', true);
+  return true;
+}
 function requestDelete(id) {
+  if (isLocked(findObject(id))) return;
   deleteObject(id);
 }
 function deleteObject(id) {
@@ -1718,6 +1789,7 @@ function areaAction(r, info) {
  * can be selected, moved, resized and repainted like a box, instead of hundreds of loose blocks.
  */
 function placeFill(r, info) {
+  if (state.shape === 'door' || state.shape === 'trapdoor') { toast('Doors and trapdoors go one at a time: click instead of dragging', true); return; }
   const g = state.grid;
   const round = state.area && state.circle;
   let empty = 0;
@@ -1812,6 +1884,11 @@ function findEdit(x, y, z) {
     const i = L.list.findIndex((e) => e.x + L.ox === x && e.y + L.oy === y && e.z + L.oz === z);
     if (i >= 0) return { ...L, index: i, edit: L.list[i] };
   }
+  // The top half of a door belongs to the edit in the cell below.
+  for (const L of editLists()) {
+    const i = L.list.findIndex((e) => e.shape === 'door' && e.x + L.ox === x && e.y + L.oy === y - 1 && e.z + L.oz === z);
+    if (i >= 0) return { ...L, index: i, edit: L.list[i] };
+  }
   return null;
 }
 function removeEditAt(x, y, z) {
@@ -1868,6 +1945,11 @@ function blockAction(info, mods = {}) {
     if (state.shape === 'stair') edit.facing = info.fromPlan ? state.planFacing : info.facing;
     if (state.shape === 'full' && FAMILIES[state.brush].axis) edit.axis = info.normal[0] ? 'x' : info.normal[2] ? 'z' : 'y';
     if (state.shape === 'pane') edit.axis = paneAxis(info);
+    if (state.shape === 'door' || state.shape === 'trapdoor') Object.assign(edit, doorState(info));
+    if (state.shape === 'door' && (g.blocks.has(blockKey(t[0], t[1] + 1, t[2])) || !FAMILIES[state.brush].door)) {
+      toast(FAMILIES[state.brush].door ? 'A door needs two free blocks' : famName(state.brush) + ' has no door: pick a wood, iron or copper block', true);
+      return;
+    }
     run = () => putEdit(edit, ownerBox(at ? at.src : null));
   } else if (state.tool === 'erase') {
     if (!at) return;
@@ -1884,6 +1966,19 @@ function blockAction(info, mods = {}) {
   syncPropValues();
   updateToolbar();
   if (msg && !mods.stroke) toast(msg, false, { label: 'Undo', run: undo });
+}
+/**
+ * Door: faces the way you look, so you walk in through it. Trapdoor: hinged on the block you
+ * click (top or bottom half from where you click it), or flat facing you on a floor or ceiling.
+ */
+function doorState(info) {
+  const look = info.fromPlan || !info.facing ? state.planFacing : info.facing;
+  const shape = studio.open ? studio.shape : state.shape;
+  if (shape === 'door') return { facing: look, hinge: 'left' };
+  const n = info.normal || [0, 1, 0];
+  const side = n[0] > 0 ? 'east' : n[0] < 0 ? 'west' : n[2] > 0 ? 'south' : n[2] < 0 ? 'north' : null;
+  const opp = { north: 'south', south: 'north', east: 'west', west: 'east' };
+  return { facing: side || opp[look], half: side ? info.half || 'bottom' : n[1] < 0 ? 'top' : 'bottom', open: !!side };
 }
 /** A pane runs along the wall you click, or across your view when placed on the ground. */
 function paneAxis(info) {
@@ -1977,7 +2072,7 @@ function rerollVariation(id) {
 
 function rotateSelected(q) {
   const f = findObject(state.selectedId);
-  if (!f || f.kind === 'pillar') return;
+  if (!f || f.kind === 'pillar' || isLocked(f)) return;
   const sig = JSON.stringify(f.obj);
   let a = state.rotAnchor;
   if (!a || a.id !== f.obj.id || a.sig !== sig) a = { id: f.obj.id, start: JSON.parse(sig), q: 0 };
@@ -1993,7 +2088,7 @@ function rotateSelected(q) {
 
 function nudge(dx, dz, dy = 0) {
   const f = findObject(state.selectedId);
-  if (!f) return;
+  if (!f || isLocked(f)) return;
   beginChange('nudge:' + f.obj.id);
   if (f.kind === 'segment') { f.obj.x0 += dx; f.obj.x1 += dx; f.obj.z0 += dz; f.obj.z1 += dz; }
   else { f.obj.x += dx; f.obj.z += dz; }
@@ -2701,6 +2796,7 @@ function wire() {
     const k = Math.min(8, Math.max(0.25, +$('scaleFactor').value || 1));
     if (k === 1) { openScale(false); return; }
     const one = $('scaleScope').value === 'one' && state.selectedId && findObject(state.selectedId) ? state.selectedId : null;
+    if (one && isLocked(findObject(one))) return;
     beginChange(null);
     const { design, dropped } = scaleDesign(state.design, k, { only: one });
     state.design = design;

@@ -3,7 +3,7 @@
 // other modules. Names in the legend are derived from the block id; app.js
 // upgrades them to FAMILIES[mat].name when blocks.js is available.
 
-const KIND_LABEL = { full: 'block', slab: 'slab', stair: 'stairs', wall: 'wall', pane: 'pane' };
+const KIND_LABEL = { full: 'block', slab: 'slab', stair: 'stairs', wall: 'wall', pane: 'pane', door: 'door', trapdoor: 'trapdoor' };
 
 function parseKey(key) {
   const p = key.split(',');
@@ -134,6 +134,16 @@ function hatch(ctx, px, py, c, color) {
   ctx.restore();
 }
 
+const SIDE_OPP = { north: 'south', south: 'north', east: 'west', west: 'east' };
+const SIDE_CW = { north: 'east', east: 'south', south: 'west', west: 'north' };
+const SIDE_CCW = { north: 'west', west: 'south', south: 'east', east: 'north' };
+/** Which side of its cell a door or open trapdoor's panel stands on (null: lying flat). */
+function panelSide(b) {
+  const p = b.props || {}, f = SIDE_OPP[p.facing] ? p.facing : 'north';
+  if (b.kind === 'trapdoor') return p.open === 'true' ? SIDE_OPP[f] : null;
+  return p.open !== 'true' ? SIDE_OPP[f] : p.hinge === 'right' ? SIDE_CW[f] : SIDE_CCW[f];
+}
+
 function drawBlock(ctx, b, px, py, c) {
   const color = b.color || '#888888';
   const gc = glyphColor(color);
@@ -150,6 +160,22 @@ function drawBlock(ctx, b, px, py, c) {
     const ew = p.east === 'true' || p.west === 'true', ns = p.north === 'true' || p.south === 'true';
     if (ew || !ns) ctx.fillRect(px + (p.west === 'true' ? 0 : m), py + m, (p.west === 'true' ? m : 0) + t + (p.east === 'true' ? m : 0), t);
     if (ns) ctx.fillRect(px + m, py + (p.north === 'true' ? 0 : m), t, (p.north === 'true' ? m : 0) + t + (p.south === 'true' ? m : 0));
+    return;
+  }
+
+  if (b.kind === 'door' || b.kind === 'trapdoor') {
+    // Faint cell with the panel drawn where it stands; a closed trapdoor is a faint full square.
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.25;
+    ctx.fillRect(px, py, c, c);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = b.kind === 'door' ? border : color;
+    const side = panelSide(b), t = Math.max(2, Math.round(c * 0.19));
+    if (side === 'north') ctx.fillRect(px, py, c, t);
+    else if (side === 'south') ctx.fillRect(px, py + c - t, c, t);
+    else if (side === 'west') ctx.fillRect(px, py, t, c);
+    else if (side === 'east') ctx.fillRect(px + c - t, py, t, c);
+    if (b.kind === 'trapdoor' && b.props && b.props.open !== 'true') { ctx.strokeStyle = border; ctx.lineWidth = 1; ctx.strokeRect(px + 0.5, py + 0.5, c - 1, c - 1); }
     return;
   }
 
