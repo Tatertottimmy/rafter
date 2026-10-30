@@ -3,49 +3,16 @@
 // resize handles, move/resize drags, layer slicing.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { familyTexture } from './textures.js';
 import { FAMILIES } from './blocks.js';
 import { rotatePatch, stampCells } from './engine.js';
-import { DIRS, STAIR_SHAPES, STAIR_HALVES, stairBoxes, WALL_BOXES, uvForVertex, roofHeightEstimate, lowerBound, shapeBoxes, rayBox, meshGrid } from './mesher.js';
+import { roofHeightEstimate, lowerBound, shapeBoxes, rayBox, meshGrid } from './mesher.js';
 
 export * from './mesher.js';
 
 // ---------------------------------------------------------------------------
 // THREE geometry construction
 // ---------------------------------------------------------------------------
-
-function boxGeometry(b) {
-  const [x0, y0, z0, x1, y1, z1] = b;
-  const g = new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0);
-  g.translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
-  const pos = g.attributes.position, nor = g.attributes.normal, uv = g.attributes.uv;
-  for (let i = 0; i < pos.count; i++) {
-    const [u, v] = uvForVertex(nor.getX(i), nor.getY(i), nor.getZ(i), pos.getX(i), pos.getY(i), pos.getZ(i));
-    uv.setXY(i, u, v);
-  }
-  return g;
-}
-
-function kindGeometry(boxes) {
-  const parts = boxes.map(boxGeometry);
-  let g = parts.length === 1 ? parts[0] : mergeGeometries(parts, false);
-  if (parts.length > 1) parts.forEach((p) => p.dispose());
-  g.translate(-0.5, -0.5, -0.5); // centre on origin; instances are placed at block centres
-  g.computeBoundingSphere();
-  return g;
-}
-
-/** Build all geometry kinds (centred at origin). */
-export function buildGeometries() {
-  const geos = new Map();
-  geos.set('full', kindGeometry([[0, 0, 0, 1, 1, 1]]));
-  geos.set('slab_bottom', kindGeometry([[0, 0, 0, 1, 0.5, 1]]));
-  geos.set('slab_top', kindGeometry([[0, 0.5, 0, 1, 1, 1]]));
-  for (const s of STAIR_SHAPES) for (const h of STAIR_HALVES) geos.set(`stair_${s}_${h}`, kindGeometry(stairBoxes(s, h)));
-  for (const k of Object.keys(WALL_BOXES)) geos.set(k, kindGeometry(WALL_BOXES[k]));
-  return geos;
-}
 
 /** A second geometry over the same buffers (its own draw range). */
 function shareGeometry(g) {
@@ -239,7 +206,6 @@ export class Viewer {
     this.scene.add(this.blockGroup, this.overlayGroup, this.selGroup);
     this.gridHelper = null;
 
-    this.geos = buildGeometries();
     this.materials = new Map(); // family key -> {base, hl, tex}
     this.instanced = [];        // [{mesh, hl, ys}]
     this.proxies = [];
@@ -296,6 +262,7 @@ export class Viewer {
 
   setDesign(design) {
     this.design = design;
+    this._snapCache = null;
     this._clearGroup(this.overlayGroup);
     this.proxies = [];
     if (!design) { this._rebuildSelection(); this.requestRender(); return; }
@@ -456,6 +423,9 @@ export class Viewer {
    * as dark outlines of the holes), or null to clear.
    */
   setGhost(cells) {
+    const key = cells && cells.length ? cells.map((c) => `${c.x},${c.y},${c.z},${c.color || ''},${c.cut ? 1 : 0}`).join(';') : null;
+    if (key === this._ghostKey) return;
+    this._ghostKey = key;
     if (this._ghost) { this.scene.remove(this._ghost); this._ghost.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); this._ghost = null; }
     if (cells && cells.length) {
       const g = new THREE.Group();
@@ -509,17 +479,26 @@ export class Viewer {
   setSelectedBlocks(cells) {
     this._selCells = new Set((cells || []).map((c) => c.join(',')));
     this._clearGroup(this._blockSelGroup);
-    const color = new THREE.Color(cssVar(this.container, '--accent', '#d9814a'));
-    const mat = new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true });
-    const fillMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, depthWrite: false });
-    const edges = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.04, 1.04, 1.04));
-    const box = new THREE.BoxGeometry(1.03, 1.03, 1.03);
-    for (const [x, y, z] of cells || []) {
-      const line = new THREE.LineSegments(edges, mat);
-      line.position.set(x + 0.5, y + 0.5, z + 0.5);
+    const list = cells || [];
+    if (list.length) {
+      // Two draw calls however many blocks: instanced fills and one set of outline segments.
+      const color = new THREE.Color(cssVar(this.container, '--accent', '#d9814a'));
+      const fill = new THREE.InstancedMesh(new THREE.BoxGeometry(1.03, 1.03, 1.03), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, depthWrite: false }), list.length);
+      const m4 = new THREE.Matrix4();
+      const unit = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.04, 1.04, 1.04)).attributes.position.array;
+      const pos = new Float32Array(unit.length * list.length);
+      list.forEach(([x, y, z], i) => {
+        fill.setMatrixAt(i, m4.makeTranslation(x + 0.5, y + 0.5, z + 0.5));
+        for (let j = 0, o = i * unit.length; j < unit.length; j += 3) {
+          pos[o + j] = unit[j] + x + 0.5; pos[o + j + 1] = unit[j + 1] + y + 0.5; pos[o + j + 2] = unit[j + 2] + z + 0.5;
+        }
+      });
+      fill.frustumCulled = false;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      const line = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true }));
       line.renderOrder = 21;
-      const fill = new THREE.Mesh(box, fillMat);
-      fill.position.copy(line.position);
+      line.frustumCulled = false;
       this._blockSelGroup.add(line, fill);
     }
     this.requestRender();
@@ -641,9 +620,12 @@ export class Viewer {
 
   /** Mark the snap point t ({x, z}) at height y, or clear the mark. */
   _showSnap(t, y = 0) {
+    const r = t ? this._snapRadius(t.x, y, t.z) * 0.55 : 0;
+    const key = t ? `${t.x},${y},${t.z},${r.toFixed(2)}` : null;
+    if (key === this._snapKey) return;
+    this._snapKey = key;
     this._clearGroup(this._snapGroup);
     if (t) {
-      const r = this._snapRadius(t.x, y, t.z) * 0.55;
       const color = new THREE.Color(cssVar(this.container, '--accent', '#d9814a'));
       const ring = new THREE.Mesh(new THREE.RingGeometry(r * 0.7, r, 32), new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.95, side: THREE.DoubleSide }));
       ring.rotation.x = -Math.PI / 2;
@@ -662,7 +644,13 @@ export class Viewer {
     if (!this.snap || !this.design) return null;
     const p = this._planePoint(e, y);
     if (!p) return null;
-    return nearestSnap(snapTargets(this.design), p.x, p.z, this._snapRadius(p.x, y, p.z));
+    return nearestSnap(this._snapTargets(), p.x, p.z, this._snapRadius(p.x, y, p.z));
+  }
+
+  /** Snap targets of the current design, worked out once per setDesign. */
+  _snapTargets() {
+    if (!this._snapCache) this._snapCache = snapTargets(this.design);
+    return this._snapCache;
   }
 
   setSliceY(yMax) {
@@ -718,7 +706,6 @@ export class Viewer {
     this._clearGroup(this.selGroup);
     for (const { base, hl, tex } of this.materials.values()) { base.dispose(); hl.dispose(); tex.dispose(); }
     this.materials.clear();
-    for (const g of this.geos.values()) g.dispose();
     if (this.gridHelper) { this.gridHelper.geometry.dispose(); this.gridHelper.material.dispose(); }
     this.renderer.dispose();
     if (el.parentNode) el.parentNode.removeChild(el);
@@ -949,7 +936,7 @@ export class Viewer {
   /** Light up the node or arrow under the pointer (solid, a little bigger) and show a grab cursor. */
   _hoverHandles(e) {
     let hot = null;
-    if (this.handles.length) {
+    if (this.handles.length && this.tool === 'select') {
       this._setNDC(e);
       const hit = this._handleHit();
       if (hit) hot = hit.object.parent;
@@ -1273,7 +1260,7 @@ export class Viewer {
         let px = p.x, pz = p.z;
         // The far corner snaps too (unless drawing from the centre: the size is free then).
         const centre = e.ctrlKey || e.metaKey;
-        const t = !centre && this.snap ? nearestSnap(snapTargets(this.design), px, pz, this._snapRadius(px, ar.planeY, pz)) : null;
+        const t = !centre && this.snap ? nearestSnap(this._snapTargets(), px, pz, this._snapRadius(px, ar.planeY, pz)) : null;
         if (t) { px = t.x; pz = t.z; }
         this._showSnap(t || ar.snap0 || null, ar.planeY);
         if (centre) {
@@ -1317,7 +1304,7 @@ export class Viewer {
       if (this.cb.onMoveBlocks) this.cb.onMoveBlocks(dx, dz);
       return;
     }
-    if (!this._drag && !e.buttons && this.handles.length) this._hoverHandles(e);
+    if (!this._drag && !e.buttons && (this.handles.length || this._hot) && (this.tool === 'select' || this._hot)) this._hoverHandles(e);
     if (this.tool !== 'select') {
       if (this._stroke) { e.stopImmediatePropagation(); this._strokeAt(e); return; }
       this._hoverEvt = e;

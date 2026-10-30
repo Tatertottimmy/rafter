@@ -308,7 +308,7 @@ export function meshGrid(grid) {
   };
   const { min: lo = { x: 0, y: 0, z: 0 }, max: hi = { x: 0, y: 0, z: 0 } } = grid || {};
   const sy = hi.y - lo.y + 3, sz = hi.z - lo.z + 3, vol = (hi.x - lo.x + 3) * sy * sz;
-  const occ = blocks.size && vol <= 1 << 27 ? new Uint16Array(vol) : null;
+  const occ = blocks.size && vol <= 1 << 24 ? new Uint16Array(vol) : null;
   const at = (x, y, z) => ((x - lo.x + 1) * sy + (y - lo.y + 1)) * sz + (z - lo.z + 1);
   const STEP = [sy * sz, -sy * sz, sz, -sz, 1, -1]; // index offset to the neighbour across face f
 

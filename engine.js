@@ -976,6 +976,20 @@ function upperCoversFace(blk, d) {
   if (blk.kind === 'slab') return blk.props.type === 'top';
   if (blk.kind !== 'stair') return true;
   if (blk.props.half === 'top') return true;
+  const t = UCF[blk.props.shape] || UCF.straight;
+  return (t[blk.props.facing] || t.north)[d] !== false;
+}
+// Bottom stairs: UCF[shape][facing][dir] = does the stair's tall part fill that face? (A table:
+// this runs for every roof stair, four times.)
+const UCF = {};
+for (const shape of Object.keys(TALL_QUARTERS_N)) {
+  UCF[shape] = {};
+  for (const facing of Object.keys(ROT_Q)) {
+    UCF[shape][facing] = {};
+    for (const d of Object.keys(ROT_Q)) UCF[shape][facing][d] = bottomStairCovers({ props: { shape, facing } }, d);
+  }
+}
+function bottomStairCovers(blk, d) {
   const tall = (TALL_QUARTERS_N[blk.props.shape] || TALL_QUARTERS_N.straight).map(([u, v]) => ROT_Q[blk.props.facing](u, v).join(','));
   const face = { north: ['-1,-1', '1,-1'], south: ['-1,1', '1,1'], east: ['1,-1', '1,1'], west: ['-1,-1', '-1,1'] }[d];
   return face.every((q) => tall.includes(q));
@@ -1335,7 +1349,9 @@ export function buildGrid(input) {
         const corner = (cx === b.x || cx === x1) && (cz === b.z || cz === z1);
         // Side this column belongs to: runs along x (north/south walls) or z (east/west walls).
         const along = cz === b.z || cz === z1 ? 'x' : 'z';
-        const side = along === 'x' ? (cz === b.z ? 'north' : 'south') : (cx === b.x ? 'west' : 'east');
+        // A box one block deep (or wide) is both walls at once: either side's openings count.
+        const sides = along === 'x' ? (cz === b.z && cz === z1 ? ['north', 'south'] : [cz === b.z ? 'north' : 'south'])
+          : (cx === b.x && cx === x1 ? ['west', 'east'] : [cx === b.x ? 'west' : 'east']);
         const i = along === 'x' ? cx - b.x : cz - b.z;
         const lowest = roofMinOf(bi).get(colKey(cx, cz));
         let start = (lowest === undefined ? E : lowest) - 1;
@@ -1347,7 +1363,8 @@ export function buildGrid(input) {
         for (let y = start; y >= b.baseY; y--) {
           if (has(cx, y, cz)) break; // STOP at anything already there (roof, other walls, ...)
           if (insideOtherRoom(b, cx, cz, y, false)) break; // STOP inside another box's room
-          const cell = corner ? null : op.at(side, i, y);
+          let cell = null, side = sides[0];
+          if (!corner) for (const sd of sides) { cell = op.at(sd, i, y); if (cell) { side = sd; break; } }
           let blk;
           if (det.base && y === b.baseY) blk = tag(fullBlock(det.baseMat, 'wall'), b.id, 'details.baseMat');
           else if (det.corners && corner) blk = tag(fullBlock(det.cornerMat, 'wall', 'y'), b.id, 'details.cornerMat');
@@ -1454,6 +1471,7 @@ export function buildGrid(input) {
   }
 
   // ---- STEP 7b: texture variation (main wall / roof material only) ------------------------
+  let bySrc = null; // box id -> its block keys, gathered once (not a scan of every block per box)
   for (const b of design.boxes) {
     const va = b.ownTexture ? b.variation : design.variation;
     if (!va.wall && !va.roof) continue;
@@ -1464,9 +1482,15 @@ export function buildGrid(input) {
     const amount = { wallMaterial: va.wall / 100, 'roof.material': va.roof / 100 };
     const E = b.baseY + b.wallH;
     let roofTop = E + 1;
-    for (const blk of blocks.values()) if (blk.src === b.id && blk.path === 'roof.material') roofTop = Math.max(roofTop, blk.y + 1);
-    for (const [key, blk] of blocks) {
-      if (blk.src !== b.id) continue;
+    if (!bySrc) {
+      bySrc = new Map();
+      for (const [key, blk] of blocks) { let l = bySrc.get(blk.src); if (!l) bySrc.set(blk.src, l = []); l.push(key); }
+    }
+    const own = bySrc.get(b.id) || [];
+    for (const key of own) { const blk = blocks.get(key); if (blk.path === 'roof.material') roofTop = Math.max(roofTop, blk.y + 1); }
+    for (const key of own) {
+      const blk = blocks.get(key);
+      if (!blk || blk.src !== b.id) continue;
       const mix = mixes[blk.path];
       if (!mix || !mix.length) continue;
       const { x, y, z } = blk;
@@ -1514,12 +1538,19 @@ export function buildGrid(input) {
   for (const e of edits) {
     const key = blockKey(e.x, e.y, e.z);
     const cur = blocks.get(key);
-    if (e.shape === 'erase') { blocks.delete(key); continue; }
+    // A door is two blocks: erasing or painting either half takes the other with it.
+    const pair = cur && cur.kind === 'door' ? e.y + (cur.props.half === 'upper' ? -1 : 1) : null;
+    const partner = pair !== null && blocks.get(blockKey(e.x, pair, e.z));
+    const ys = partner && partner.kind === 'door' ? [e.y, pair] : [e.y];
+    if (e.shape === 'erase') { for (const y of ys) blocks.delete(blockKey(e.x, y, e.z)); continue; }
     if (e.shape === 'paint') {
       if (!cur) continue;
-      const nb = reskin(cur, e.mat) || tag(fullBlock(e.mat, cur.role), cur.src, cur.path);
-      nb.edited = true;
-      put(e.x, e.y, e.z, nb);
+      for (const y of ys) {
+        const c = blocks.get(blockKey(e.x, y, e.z));
+        const nb = reskin(c, e.mat) || tag(fullBlock(e.mat, c.role), c.src, c.path);
+        nb.edited = true;
+        put(e.x, y, e.z, nb);
+      }
       continue;
     }
     if (e.shape === 'stair') editedStairs = true;

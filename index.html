@@ -136,7 +136,6 @@
     min-width: 0;
   }
   .palette > * { flex: none; }
-  .palette-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-right: 2px; }
   .chip {
     display: inline-flex; align-items: center; gap: 6px; min-width: 0;
     padding: 3px 8px 3px 4px;
@@ -200,8 +199,8 @@
     max-width: 100%;
   }
   .pane, .fields, .field, .field > *, .matbtn, .legend li, .legend li > *, .layer-stepper, .layer-stepper > *,
-  .export-grid, .export-grid > *, .export-buttons, .props-head, .props-head > *, .section-head, .section-head > *,
-  .hud, .hud > *, .viewport-overlay > * { min-width: 0; }
+  .export-grid, .export-grid > *, .export-buttons, .props-head, .props-head > *,
+  .hud, .hud > * { min-width: 0; }
   .fields > .field > input, .fields > .field > select { max-width: 100%; }
   .panel h2, .panel-title {
     font-family: var(--font-display);
@@ -213,7 +212,6 @@
   .section { padding: 12px 12px 14px; border-bottom: 1px solid var(--line); min-width: 0; }
   .obj-list li { min-width: 0; }
   .section:last-child { border-bottom: 0; }
-  .section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
   .add-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
   .scale-box { display: flex; flex-direction: column; gap: 6px; padding: 8px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: var(--radius); }
   .scale-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
@@ -315,13 +313,6 @@
   }
   #viewport { position: absolute; inset: 0; touch-action: none; }
   #viewport canvas { display: block; outline: none; max-width: 100%; max-height: 100%; }
-  .viewport-overlay {
-    position: absolute;
-    left: 10px; top: 10px; right: 10px;
-    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
-    pointer-events: none;
-  }
-  .viewport-overlay > * { pointer-events: auto; }
   .hud {
     display: flex; align-items: center; gap: 8px;
     padding: 6px 10px;
@@ -490,7 +481,6 @@
   .pal-role:hover { border-color: var(--accent); }
   .pal-role.warn { border-color: #c98a1a; }
   .pal-foot { margin: 0; padding: 6px 10px 8px; font-size: 11px; border-top: 1px solid var(--line); }
-  .palette-open { cursor: pointer; border: 0; background: transparent; font: inherit; color: inherit; text-decoration: underline dotted; }
   .popover {
     position: fixed;
     z-index: 50;

@@ -43,7 +43,6 @@ const state = {
   past: [],
   future: [],
   dragging: false,
-  tab: 'plans',
   lastChange: { key: null, t: 0 },
   propsFor: null, // "kind:id" the editor DOM was built for
   tool: 'select',   // select | paint | place | erase
@@ -167,9 +166,18 @@ function loadInitial() {
   d.dataVersion = DEFAULT_DATA_VERSION;
   return d;
 }
+// Saving stringifies the whole design, so drags and typing save at most every 300ms.
+let persistTimer = 0;
 function persist() {
+  if (!persistTimer) persistTimer = setTimeout(persistNow, 300);
+}
+function persistNow() {
+  clearTimeout(persistTimer);
+  persistTimer = 0;
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.design)); } catch (e) { /* ignore */ }
 }
+addEventListener('pagehide', persistNow);
+document.addEventListener('visibilitychange', () => { if (document.hidden && persistTimer) persistNow(); });
 
 // ------------------------------------------------------------------ history
 function beginChange(key) {
@@ -441,6 +449,9 @@ function renderHeaderFields() {
 }
 
 function renderPalette() {
+  renderPaletteWin();
+  renderAssetsPane();
+  if (!paneShown('left', 'palette')) return; // drawn when its tab opens
   const bar = $('paletteBar');
   const usage = new Map(); // key -> { count, roof }
   const touch = (key, roof, core = true) => {
@@ -471,8 +482,6 @@ function renderPalette() {
     bar.append(chip);
   }
   if (!entries.length) bar.append(h('p', { class: 'empty', text: 'No blocks yet.' }));
-  renderPaletteWin();
-  renderAssetsPane();
 }
 
 /** The Assets tab: this project's assets, each one click from placing or editing. */
@@ -579,16 +588,22 @@ function stampAt(info) {
   const facing = n[0] > 0 ? 'east' : n[0] < 0 ? 'west' : n[2] > 0 ? 'south' : 'north';
   return { asset: state.stampAsset, x: info.cell[0], baseY: info.cell[1], z: info.cell[2], facing };
 }
+/** The asset the Asset tool places: the chosen one, else the first (after a load or undo dropped it). */
+function stampAsset() {
+  let a = assetById(state.stampAsset);
+  if (!a && state.design.assets.length) { a = state.design.assets[0]; state.stampAsset = a.id; renderStampPick(); }
+  return a;
+}
 function stampGhost(info) {
   if (!viewer) return;
-  const a = assetById(state.stampAsset);
+  const a = stampAsset();
   const st = a && stampAt(info);
   if (!st) { viewer.setGhost(null); return; }
   viewer.setGhost(stampCells(a, st).map((c) => ({ x: c.x, y: c.y, z: c.z, cut: c.shape === 'erase', color: c.mat ? famColor(c.mat) : null })));
 }
 function placeStamp(info) {
-  const a = assetById(state.stampAsset);
-  if (!a) return;
+  const a = stampAsset();
+  if (!a) { toast('No assets yet: make one in the Asset Studio', true); return; }
   const st = stampAt(info);
   if (!st) { toast('Point at the side of a wall to place ' + a.name); return; }
   const d = state.design;
@@ -706,6 +721,10 @@ function studioAction(info, mods = {}) {
     if (studio.shape === 'full' && FAMILIES[studio.brush].axis) c.axis = info.normal[0] ? 'x' : info.normal[2] ? 'z' : 'y';
     if (studio.shape === 'pane') c.axis = paneAxis(info);
     if (studio.shape === 'door' || studio.shape === 'trapdoor') Object.assign(c, doorState(info));
+    if (studio.shape === 'door' && (grid.blocks.has(blockKey(t[0], t[1] + 1, t[2])) || !FAMILIES[studio.brush].door)) {
+      toast(FAMILIES[studio.brush].door ? 'A door needs two free blocks' : famName(studio.brush) + ' has no door: pick a wood, iron or copper block', true);
+      return;
+    }
     run = () => { const i = studioCellIndex(a, ...t); if (i >= 0) a.cells.splice(i, 1); a.cells.push(c); };
   } else if (studio.tool === 'paint') {
     if (!at) return;
@@ -980,7 +999,7 @@ function wirePaletteWin() {
   const win = $('palWin');
   $('palClose').addEventListener('click', closePaletteWin);
   $('palScope').addEventListener('change', (e) => { palWin.scope = e.target.value || null; renderPaletteWin(); });
-  win.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('popover').hidden) closePaletteWin(); });
+  win.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('popover').hidden) { e.stopPropagation(); closePaletteWin(); } });
   // Drag the window by its title bar; it stays inside the page.
   const head = $('palHead');
   head.addEventListener('pointerdown', (e) => {
@@ -991,9 +1010,10 @@ function wirePaletteWin() {
       const x = Math.min(Math.max(0, ev.clientX - ox), innerWidth - r.width), y = Math.min(Math.max(0, ev.clientY - oy), innerHeight - 40);
       win.style.left = x + 'px'; win.style.top = y + 'px'; win.style.right = 'auto';
     };
-    const up = () => { head.removeEventListener('pointermove', move); head.removeEventListener('pointerup', up); };
+    const up = () => { head.removeEventListener('pointermove', move); head.removeEventListener('pointerup', up); head.removeEventListener('pointercancel', up); };
     head.addEventListener('pointermove', move);
     head.addEventListener('pointerup', up);
+    head.addEventListener('pointercancel', up);
   });
 }
 // [detail flag(s), material key]: a material only counts as "used" while its detail is on.
@@ -1002,6 +1022,7 @@ const flagOn = (b, flags) => !!b.details && flags.some((k) => b.details[k]);
 
 // ------------------------------------------------------------------ object list
 function renderObjectList() {
+  if (!paneShown('left', 'objects')) return;
   const ul = $('objectList');
   const focusedId = document.activeElement && ul.contains(document.activeElement) ? document.activeElement.id : null;
   ul.replaceChildren();
@@ -1260,7 +1281,7 @@ function renderProps(valuesOnly = false) {
   }
   $('propsEmpty').hidden = true;
   body.hidden = false;
-  const key = f.kind + ':' + f.obj.id;
+  const key = f.kind + ':' + f.obj.id + ':' + !!f.obj.locked;
   if (valuesOnly && state.propsFor === key) { syncPropValues(); return; }
   state.propsFor = key;
   $('propsTitle').textContent = { box: 'Box', pillar: 'Pillar', segment: 'Wall segment', fill: 'Fill', stamp: 'Placed asset' }[f.kind];
@@ -1383,6 +1404,7 @@ function buildField(f, field) {
     if (getPath(cur.obj, field.path) === value) return;
     beginChange(changeKey);
     setPath(cur.obj, field.path, value);
+    if (field.type === 'text') { persist(); renderObjectList(); return; } // a name: no blocks change
     afterChange();
     syncPropValues();
   };
@@ -1975,7 +1997,10 @@ function blockAction(info, mods = {}) {
       toast(FAMILIES[state.brush].door ? 'A door needs two free blocks' : famName(state.brush) + ' has no door: pick a wood, iron or copper block', true);
       return;
     }
-    run = () => putEdit(edit, ownerBox(at ? at.src : null));
+    run = () => {
+      if (edit.shape === 'door') removeEditAt(t[0], t[1] + 1, t[2]); // an erase there would cut the top half off
+      putEdit(edit, ownerBox(at ? at.src : null));
+    };
   } else if (state.tool === 'erase') {
     if (!at) return;
     const [x, y, z] = info.cell;
@@ -2495,13 +2520,13 @@ function planCellSize() {
   return clamp(Math.floor(avail / cols), 10, 26);
 }
 function renderPlan() {
-  if (!state.grid || $('pane-plans').hidden || rails.rightClosed) return;
+  if (!state.grid || !paneShown('right', 'plans')) return;
   try {
     drawLayer($('planCanvas'), state.grid, state.currentLayer, { cell: planCellSize(), bounds: planBounds() });
   } catch (e) { console.error('plan draw failed', e); }
 }
 function renderLegend() {
-  if (!state.grid) return;
+  if (!state.grid || !paneShown('right', 'plans')) return;
   const ul = $('planLegend');
   ul.replaceChildren();
   const rows = layerLegend(state.grid, state.currentLayer);
@@ -2516,7 +2541,7 @@ function renderLegend() {
   }
 }
 function renderMaterials() {
-  if (!state.grid) return;
+  if (!state.grid || !paneShown('right', 'materials')) return;
   const tbody = $('materialsBody');
   tbody.replaceChildren();
   let rows = [];
@@ -2564,14 +2589,15 @@ function setRail(side, name, { toggle = false, open = true } = {}) {
   $('work').classList.toggle(side + '-closed', rails[closedKey]);
   if (name === 'props') $('tab-props').classList.remove('badge');
   try { localStorage.setItem('rafter.rails', JSON.stringify(rails)); } catch (e) { /* ignore */ }
-  if (name === 'plans' && !rails[closedKey]) { renderPlan(); renderLegend(); }
+  // Hidden panes skip their redraws, so draw the one coming into view.
+  if (!rails[closedKey]) ({ plans: () => { renderPlan(); renderLegend(); }, materials: renderMaterials, palette: renderPalette, objects: renderObjectList, assets: renderAssetsPane })[name]?.();
 }
+function paneShown(side, name) { return rails[side] === name && !rails[side + 'Closed']; }
 /** Something got selected: show its properties (marking the tab when its panel is folded away). */
 function showProps() {
   if (rails.right !== 'props') setRail('right', 'props', { open: false });
   if (rails.rightClosed) $('tab-props').classList.add('badge');
 }
-const setTab = (name) => setRail('right', name);
 
 // ------------------------------------------------------------------ downloads
 const CRC_TABLE = (() => {
@@ -2739,10 +2765,17 @@ function resetToSample() {
 }
 
 // ------------------------------------------------------------------ keyboard
-function isTyping(el) {
+const NOT_TEXT = new Set(['checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'file']);
+/** Keys belong to the focused field (text boxes, lists; a slider keeps its arrow keys). */
+function isTyping(el, e = null) {
   if (!el) return false;
   const tag = el.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+  if (tag === 'INPUT') {
+    if (NOT_TEXT.has(el.type)) return false;
+    if (el.type === 'range') return !!e && /^(Arrow|Home$|End$|Page)/.test(e.key);
+    return true;
+  }
+  return tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
 }
 function onKeyDown(e) {
   if (e.key === 'Escape') {
@@ -2752,12 +2785,12 @@ function onKeyDown(e) {
   // The Asset Studio covers the building: only its own keys (Esc, undo / redo) apply.
   if (studio.open) {
     if (e.key === 'Escape') { e.preventDefault(); closeStudio(); return; }
-    if (isTyping(e.target)) return;
+    if (isTyping(e.target, e)) return;
     const k = e.key.toLowerCase();
     if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) { e.preventDefault(); if (k === 'y' || e.shiftKey) redo(); else undo(); }
     return;
   }
-  if (isTyping(e.target)) return;
+  if (isTyping(e.target, e)) return;
   const mod = e.ctrlKey || e.metaKey;
   const k = e.key.toLowerCase();
   if (mod && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
@@ -2898,6 +2931,7 @@ function wire() {
     $(side === 'left' ? 'railLeft' : 'railRight').addEventListener('keydown', (e) => {
       if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
       e.preventDefault();
+      e.stopPropagation(); // not a nudge of the selection too
       const order = RAILS[side], i = order.indexOf(rails[side]);
       const next = order[(i + (e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : order.length - 1)) % order.length];
       setRail(side, next);

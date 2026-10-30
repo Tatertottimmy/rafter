@@ -81,13 +81,26 @@ class ByteWriter {
   f64(v) { this.ensure(8); this.view.setFloat64(this.pos, v, false); this.pos += 8; }
   bytes(arr) { this.ensure(arr.length); this.buf.set(arr, this.pos); this.pos += arr.length; }
   string(s) {
-    // NBT uses "modified UTF-8"; for the BMP strings we produce, standard UTF-8 is identical.
-    const enc = new TextEncoder().encode(s);
+    // NBT uses Java's "modified UTF-8": like UTF-8 for most text, but U+0000 is C0 80 and a
+    // character outside the BMP (an emoji in a design name) is its two UTF-16 halves, 3 bytes
+    // each. Java refuses ordinary 4-byte UTF-8 and the file would not load.
+    const enc = /[\0\uD800-\uDFFF]/.test(s) ? modifiedUtf8(s) : new TextEncoder().encode(s);
     if (enc.length > 0xffff) throw new Error('NBT string too long');
     this.u16(enc.length);
     this.bytes(enc);
   }
   result() { return this.buf.slice(0, this.pos); }
+}
+
+function modifiedUtf8(s) {
+  const out = [];
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 1 && c < 0x80) out.push(c);
+    else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+    else out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+  }
+  return new Uint8Array(out);
 }
 
 function writePayload(w, tag) {

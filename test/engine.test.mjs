@@ -923,3 +923,24 @@ test('a lower roof that would bury an upper storey stops under its eave', () => 
   for (const b of g.blocks.values()) if (b.src === 'b2' && b.role === 'roof') eave = Math.min(eave, b.y);
   assert.ok(worst < eave - 1, `hall roof top ${worst} under upper eave ${eave}`);
 });
+
+test('doors: erasing or painting one half takes the other half with it', () => {
+  const edits = [
+    { x: 0, y: 0, z: -3, shape: 'door', mat: 'oak', facing: 'north' },
+    { x: 0, y: 1, z: -3, shape: 'erase' },
+    { x: 2, y: 0, z: -3, shape: 'door', mat: 'oak', facing: 'north' },
+    { x: 2, y: 1, z: -3, shape: 'paint', mat: 'spruce' },
+  ];
+  const g = buildGrid(design([box()], { edits }));
+  assert.equal(get(g, 0, 0, -3), undefined, 'no lone lower half');
+  assert.equal(get(g, 0, 1, -3), undefined);
+  assert.deepEqual([get(g, 2, 0, -3).id, get(g, 2, 1, -3).id], ['minecraft:spruce_door', 'minecraft:spruce_door']);
+});
+
+test('a box one block deep still gets a south door', () => {
+  const det = { door: true, doorSide: 'south', doorWidth: 1, doorHeight: 2 };
+  const g = buildGrid(design([box({ w: 7, d: 1, details: det })]));
+  const open = [];
+  for (let x = 1; x < 6; x++) if (!get(g, x, 1, 0) && !get(g, x, 2, 0)) open.push(x);
+  assert.deepEqual(open, [3]);
+});
