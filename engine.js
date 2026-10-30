@@ -262,7 +262,8 @@ export function validateDesign(design) {
   for (const t of d.stamps) {
     claim(t, 't');
     t.x = int(t.x, 0, -4096, 4096);
-    t.y = int(t.y, 0, -64, 320);
+    t.baseY = int(t.baseY ?? t.y, 0, -64, 320);
+    delete t.y;
     t.z = int(t.z, 0, -4096, 4096);
     t.facing = oneOf(t.facing, DIRS, 'south');
   }
@@ -283,10 +284,10 @@ export function assetAnchor(asset) {
 
 const TURN = { south: 0, east: 1, north: 2, west: 3 };
 /**
- * The world cells of an asset placed at (x, y, z) facing `facing` (the way its front, +z, points
+ * The world cells of an asset placed at (x, baseY, z) facing `facing` (the way its front, +z, points
  * out of the wall). Stair facings and log / pane axes turn with it.
  */
-export function stampCells(asset, { x, y, z, facing = 'south' }) {
+export function stampCells(asset, { x, baseY: y, z, facing = 'south' }) {
   const q = TURN[facing] || 0;
   const { ax, ay } = assetAnchor(asset);
   const rot = (dx, dz) => (q === 0 ? [dx, dz] : q === 1 ? [dz, -dx] : q === 2 ? [-dx, -dz] : [-dz, dx]);
@@ -423,7 +424,7 @@ export function scaleDesign(input, factor, { only = null } = {}) {
   }
   if (!only) d.edits = scaleEdits(d.edits, 0, 0, 0, 0, 0, 0);
   // Placed assets keep their size (they are templates); their places scale with the build.
-  for (const t of d.stamps || []) if (pick(t)) { t.x = S(t.x, ax); t.y = S(t.y, ay); t.z = S(t.z, az); }
+  for (const t of d.stamps || []) if (pick(t)) { t.x = S(t.x, ax); t.baseY = S(t.baseY, ay); t.z = S(t.z, az); }
   return { design: d, dropped };
 }
 

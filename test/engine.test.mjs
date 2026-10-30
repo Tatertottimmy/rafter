@@ -875,7 +875,7 @@ test('assets: placed on a wall facing out, cutting holes and adding blocks; temp
   ] };
   const house = box({ w: 9, d: 7, wallH: 4 });
   // south wall is z = 6; east wall is x = 8
-  const d = { ...design([house]), assets: [asset], stamps: [{ id: 't1', asset: 'a1', x: 4, y: 1, z: 6, facing: 'south' }, { id: 't2', asset: 'a1', x: 8, y: 1, z: 3, facing: 'east' }] };
+  const d = { ...design([house]), assets: [asset], stamps: [{ id: 't1', asset: 'a1', x: 4, baseY: 1, z: 6, facing: 'south' }, { id: 't2', asset: 'a1', x: 8, baseY: 1, z: 3, facing: 'east' }] };
   const g = buildGrid(d);
   assert.equal(get(g, 4, 2, 6).kind, 'pane', 'glass in the south wall');
   assert.equal(get(g, 4, 3, 6), undefined, 'hole above it');

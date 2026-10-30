@@ -1,6 +1,6 @@
 // app.js — Rafter UI: state, panels, wiring, persistence, downloads. (UI owns)
 import { FAMILIES, roofFamilies, fullFamilies, GROUP_ORDER } from './blocks.js';
-import { buildGrid, decodeGrid, scaleDesign, MIX_KEYS, MIX_MAX, defaultDesign, materialTotals, newId, inOutline, validateDesign, rotatePatch, suggestVariants, blockKey, DETAIL_DEFAULTS, VARIATION_DEFAULTS, UPTURN_TYPES } from './engine.js';
+import { buildGrid, decodeGrid, scaleDesign, stampCells, MIX_KEYS, MIX_MAX, defaultDesign, materialTotals, newId, inOutline, validateDesign, rotatePatch, suggestVariants, blockKey, DETAIL_DEFAULTS, VARIATION_DEFAULTS, UPTURN_TYPES } from './engine.js';
 import { encodeLitematic, encodeSchem } from './export.js';
 import { swatchDataURL, familyIcon } from './textures.js';
 import { drawLayer, layerLegend, layerRange } from './plans.js';
@@ -56,6 +56,7 @@ const state = {
   clone: { n: 1, dir: 'east', gap: 1 },
   planFacing: 'north', // stair facing for clicks on the layer plan (R turns it while placing stairs)
   rotAnchor: null, // { id, start, q, sig }: repeated rotations restart from `start` so odd sizes don't drift
+  stampAsset: null, // asset the Asset tool places
 };
 let viewer = null;
 
@@ -125,6 +126,8 @@ function findObject(id) {
   if (i >= 0) return { kind: 'segment', obj: d.segments[i], list: d.segments, index: i };
   i = d.fills.findIndex((o) => o.id === id);
   if (i >= 0) return { kind: 'fill', obj: d.fills[i], list: d.fills, index: i };
+  i = (d.stamps || []).findIndex((o) => o.id === id);
+  if (i >= 0) return { kind: 'stamp', obj: d.stamps[i], list: d.stamps, index: i };
   return null;
 }
 function objectLabel(f) {
@@ -132,9 +135,11 @@ function objectLabel(f) {
   if (f.kind === 'box') return f.obj.name || f.obj.id;
   if (f.kind === 'pillar') return 'Pillar ' + f.obj.id;
   if (f.kind === 'fill') return 'Fill ' + f.obj.id;
+  if (f.kind === 'stamp') { const a = assetById(f.obj.asset); return (a ? a.name : 'Asset') + ' ' + f.obj.id; }
   return 'Wall ' + f.obj.id;
 }
 function objectMaterial(f) {
+  if (f.kind === 'stamp') return assetMaterial(assetById(f.obj.asset));
   return f.kind === 'box' ? f.obj.roof.material : f.obj.material;
 }
 function safeValidate(design) {
@@ -143,6 +148,7 @@ function safeValidate(design) {
 function normalizeDesign(design) {
   const d = safeValidate(design);
   d.boxes = d.boxes || []; d.pillars = d.pillars || []; d.segments = d.segments || []; d.fills = d.fills || [];
+  d.assets = d.assets || []; d.stamps = d.stamps || [];
   if (typeof d.name !== 'string') d.name = 'Untitled';
   if (typeof d.author !== 'string') d.author = '';
   if (!Number.isFinite(d.dataVersion)) d.dataVersion = DEFAULT_DATA_VERSION;
@@ -199,6 +205,7 @@ function restoreSnapshot(json) {
   renderProps(true);
   if (viewer) viewer.setSelection(state.selectedId);
   updateHistoryButtons();
+  if (studio.open) { if (!assetById(studio.assetId)) studio.assetId = state.design.assets[0] ? state.design.assets[0].id : null; renderStudio(); }
 }
 function undo() {
   if (!state.past.length) return;
@@ -360,6 +367,7 @@ async function initViewer() {
       onMoveBlocks: (dx, dz) => dragBlocks(dx, dz),
       onMoveBlocksEnd: () => endBlockDrag(),
       onStrokeEnd: () => flushRebuild(),
+      onHoverInfo: (info) => { if (state.tool === 'stamp') stampGhost(info); },
       onCommit: () => {
         state.dragging = false;
         flushRebuild();
@@ -466,6 +474,289 @@ function renderPalette() {
   renderPaletteWin();
 }
 
+// ------------------------------------------------------------------ assets
+// Assets are small templates (windows, doors, balconies, ...) made in the Asset Studio and
+// stamped onto walls. Cells: x across (right when you face it), y up, z = 0 the wall layer,
+// +z out in front, -z inside; 'erase' cells cut holes in the wall they are placed on.
+const P = (x, y, z, mat, axis = 'x') => ({ x, y, z, shape: 'pane', mat, axis });
+const F = (x, y, z, mat, axis) => (axis ? { x, y, z, shape: 'full', mat, axis } : { x, y, z, shape: 'full', mat });
+const ST = (x, y, z, mat, facing, half = 'bottom') => ({ x, y, z, shape: 'stair', mat, facing, half });
+const SL = (x, y, z, mat, half = 'bottom') => ({ x, y, z, shape: 'slab', mat, half });
+const CUT = (x, y, z = 0) => ({ x, y, z, shape: 'erase' });
+const range = (a, b) => { const r = []; for (let i = a; i <= b; i++) r.push(i); return r; };
+const STARTER_ASSETS = [
+  { name: 'Window with sill', cells: [P(0, 1, 0, 'glass'), P(0, 2, 0, 'glass'), ST(0, 0, 1, 'spruce', 'north', 'top')] },
+  { name: 'Framed window 2×2', cells: [
+    ...range(0, 1).flatMap((x) => [P(x, 1, 0, 'glass'), P(x, 2, 0, 'glass'), F(x, 0, 0, 'stripped_spruce_log', 'x'), F(x, 3, 0, 'stripped_spruce_log', 'x')]),
+    ...range(0, 3).flatMap((y) => [F(-1, y, 0, 'stripped_spruce_log', 'y'), F(2, y, 0, 'stripped_spruce_log', 'y')]),
+    ...range(-1, 2).map((x) => SL(x, 0, 1, 'spruce', 'top')),
+  ] },
+  { name: 'Shuttered window', cells: [P(0, 1, 0, 'glass'), P(0, 2, 0, 'glass'), ST(0, 0, 1, 'dark_oak', 'north', 'top'),
+    F(-1, 1, 1, 'dark_oak'), F(-1, 2, 1, 'dark_oak'), F(1, 1, 1, 'dark_oak'), F(1, 2, 1, 'dark_oak')] },
+  { name: 'Arched window', cells: [
+    ...range(-1, 1).flatMap((x) => [P(x, 1, 0, 'glass'), P(x, 2, 0, 'glass'), P(x, 3, 0, 'glass')]),
+    P(0, 4, 0, 'glass'), ST(-1, 4, 0, 'stone_bricks', 'west', 'top'), ST(1, 4, 0, 'stone_bricks', 'east', 'top'),
+    F(0, 5, 0, 'chiseled_stone_bricks'), ...range(-1, 1).map((x) => SL(x, 0, 1, 'stone_bricks', 'top')),
+  ] },
+  { name: 'Round window', cells: [
+    ...range(-1, 1).flatMap((x) => [P(x, 1, 0, 'glass'), P(x, 2, 0, 'glass'), P(x, 3, 0, 'glass')]),
+    P(0, 0, 0, 'glass'), P(0, 4, 0, 'glass'), P(-2, 2, 0, 'glass'), P(2, 2, 0, 'glass'),
+  ] },
+  { name: 'Doorway with awning', cells: [CUT(0, 0), CUT(0, 1),
+    ...range(0, 2).flatMap((y) => [F(-1, y, 0, 'stripped_spruce_log', 'y'), F(1, y, 0, 'stripped_spruce_log', 'y')]), F(0, 2, 0, 'stripped_spruce_log', 'x'),
+    ...range(-1, 1).map((x) => ST(x, 3, 1, 'spruce', 'north')),
+  ] },
+  { name: 'Balcony', cells: [CUT(0, 1), CUT(0, 2),
+    ...range(-2, 2).flatMap((x) => [SL(x, 0, 1, 'spruce', 'top'), SL(x, 0, 2, 'spruce', 'top'), P(x, 1, 2, 'glass', 'x')]),
+    P(-2, 1, 1, 'glass', 'z'), P(2, 1, 1, 'glass', 'z'),
+    ...range(-2, 2).map((x) => ST(x, -1, 1, 'spruce', 'north', 'top')).filter((c) => c.x === -2 || c.x === 2),
+  ] },
+  { name: 'Flower box', cells: [...range(-1, 1).flatMap((x) => [SL(x, 0, 1, 'spruce', 'top'), F(x, 1, 1, 'flowering_azalea_leaves')])] },
+  { name: 'Wall lamp', cells: [F(0, 0, 1, 'shroomlight'), ST(0, 1, 1, 'dark_oak', 'north', 'top')] },
+  { name: 'Buttress', cells: [...range(0, 3).map((y) => F(0, y, 1, 'stone_bricks')), F(0, 0, 2, 'stone_bricks'), F(0, 1, 2, 'stone_bricks'),
+    ST(0, 2, 2, 'stone_bricks', 'north'), ST(0, 4, 1, 'stone_bricks', 'north')] },
+];
+
+function assetById(id) { return (state.design && state.design.assets.find((a) => a.id === id)) || null; }
+/** The block an asset is mostly made of (its icon). */
+function assetMaterial(a) {
+  const n = new Map();
+  for (const c of (a && a.cells) || []) if (c.mat) n.set(c.mat, (n.get(c.mat) || 0) + 1);
+  return [...n.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] || 'glass';
+}
+function assetSize(a) {
+  const c = (a && a.cells) || [];
+  if (!c.length) return 'empty';
+  const ext = (k) => Math.max(...c.map((v) => v[k])) - Math.min(...c.map((v) => v[k])) + 1;
+  return `${ext('x')}×${ext('y')}×${ext('z')}`;
+}
+function addAsset(template) {
+  const d = state.design;
+  const a = { id: newId(d, 'a'), name: template ? template.name : 'Asset ' + (d.assets.length + 1), cells: template ? JSON.parse(JSON.stringify(template.cells)) : [] };
+  let name = a.name, i = 2;
+  while (d.assets.some((o) => o.name === name)) name = a.name + ' ' + i++;
+  a.name = name;
+  beginChange(null);
+  d.assets.push(a);
+  afterChange();
+  return a.id;
+}
+
+// ---- placing on the building
+/** The asset placement for a hover on a wall face, or null (not a wall face). */
+function stampAt(info) {
+  if (!info || !info.cell || info.ground) return null;
+  const n = info.normal || [0, 1, 0];
+  if (n[1] !== 0) return null;
+  const facing = n[0] > 0 ? 'east' : n[0] < 0 ? 'west' : n[2] > 0 ? 'south' : 'north';
+  return { asset: state.stampAsset, x: info.cell[0], baseY: info.cell[1], z: info.cell[2], facing };
+}
+function stampGhost(info) {
+  if (!viewer) return;
+  const a = assetById(state.stampAsset);
+  const st = a && stampAt(info);
+  if (!st) { viewer.setGhost(null); return; }
+  viewer.setGhost(stampCells(a, st).map((c) => ({ x: c.x, y: c.y, z: c.z, cut: c.shape === 'erase', color: c.mat ? famColor(c.mat) : null })));
+}
+function placeStamp(info) {
+  const a = assetById(state.stampAsset);
+  if (!a) return;
+  const st = stampAt(info);
+  if (!st) { toast('Point at the side of a wall to place ' + a.name); return; }
+  const d = state.design;
+  beginChange(null);
+  d.stamps.push({ id: newId(d, 't'), ...st });
+  afterChange();
+  toast(`Placed ${a.name} facing ${st.facing}`, false, { label: 'Undo', run: undo });
+}
+function renderStampPick() {
+  const sel = $('stampPick');
+  const d = state.design;
+  sel.replaceChildren(...d.assets.map((a) => h('option', { value: a.id, text: a.name })), h('option', { value: '__studio', text: 'Assets… (make or edit)' }));
+  sel.value = assetById(state.stampAsset) ? state.stampAsset : '';
+}
+
+// ---- the Asset Studio: its own 3D builder
+const studio = { open: false, assetId: null, tool: 'place', shape: 'full', brush: 'glass', wallMat: 'stone_bricks', showWall: true, viewer: null, W: 5, Y0: -3, Y1: 7 };
+async function openStudio(assetId = null) {
+  const d = state.design;
+  if (assetId) studio.assetId = assetId;
+  if (!assetById(studio.assetId)) studio.assetId = d.assets[0] ? d.assets[0].id : null;
+  // The sample wall takes the selected box's wall block, so assets are made against the real look.
+  const sel = findObject(state.selectedId);
+  if (sel && sel.kind === 'box') studio.wallMat = sel.obj.wallMaterial;
+  studio.open = true;
+  $('studio').hidden = false;
+  if (!studio.viewer) {
+    try {
+      const mod = await import('./viewer3d.js');
+      studio.viewer = new mod.Viewer($('studioView'), {
+        onBlockClick: (info, mods) => studioAction(info, mods),
+        onSelect: () => {},
+      });
+    } catch (e) { console.error(e); toast('Could not start the 3D view for the studio', true); return; }
+  }
+  studio.viewer.setTool(studio.tool, { shape: studio.shape });
+  renderStudio(true);
+}
+function closeStudio() {
+  studio.open = false;
+  $('studio').hidden = true;
+}
+function studioCellIndex(a, x, y, z) { return a.cells.findIndex((c) => c.x === x && c.y === y && c.z === z); }
+function inSampleWall(x, y, z) { return studio.showWall && z === 0 && x >= -studio.W && x <= studio.W && y >= studio.Y0 && y <= studio.Y1; }
+/** Build what the studio shows: the sample wall, with the asset's cuts and blocks applied. */
+function studioGrid() {
+  const a = assetById(studio.assetId);
+  const cells = a ? a.cells : [];
+  const taken = new Set(cells.map((c) => c.x + ',' + c.y + ',' + c.z));
+  const edits = [];
+  if (studio.showWall) for (let y = studio.Y0; y <= studio.Y1; y++) for (let x = -studio.W; x <= studio.W; x++) if (!taken.has(x + ',' + y + ',0')) edits.push({ x, y, z: 0, shape: 'full', mat: studio.wallMat });
+  const cut = [];
+  for (const c of cells) { if (c.shape === 'erase') cut.push([c.x, c.y, c.z]); else edits.push({ ...c }); }
+  return { grid: buildGrid({ boxes: [], edits }), cut };
+}
+function renderStudio(frame = false) {
+  if (!studio.open) return;
+  const d = state.design;
+  const a = assetById(studio.assetId);
+  // gallery
+  const list = $('assetList');
+  list.replaceChildren();
+  if (!d.assets.length) list.append(h('li', { class: 'empty', text: 'No assets yet. Make one, or add a starter.' }));
+  for (const as of d.assets) {
+    const placed = d.stamps.filter((t) => t.asset === as.id).length;
+    const btn = h('button', { class: 'obj', type: 'button', 'aria-pressed': String(as.id === studio.assetId) },
+      iconEl(assetMaterial(as), 22), h('span', { class: 'obj-name', text: as.name }), h('span', { class: 'obj-meta', text: assetSize(as) + (placed ? ` · ${placed} placed` : '') }));
+    btn.addEventListener('click', () => { studio.assetId = as.id; renderStudio(true); });
+    list.append(h('li', {}, btn));
+  }
+  // header
+  $('assetName').disabled = !a;
+  if (document.activeElement !== $('assetName')) $('assetName').value = a ? a.name : '';
+  for (const id of ['assetDup', 'assetDel', 'studioPlace']) $(id).disabled = !a;
+  for (const b of $('studioTools').querySelectorAll('[data-stool]')) b.setAttribute('aria-pressed', String(b.dataset.stool === studio.tool));
+  for (const b of $('studioShapes').querySelectorAll('[data-sshape]')) b.setAttribute('aria-pressed', String(b.dataset.sshape === studio.shape));
+  $('studioShapes').hidden = studio.tool !== 'place';
+  const setIcon = (btn, key) => { const img = btn.querySelector('img'); if (img.dataset.key !== key) { img.src = iconURL(key, 28); img.dataset.key = key; } btn.querySelector('.mat-name').textContent = famName(key); };
+  setIcon($('studioBrush'), studio.brush);
+  setIcon($('studioWallMat'), studio.wallMat);
+  $('studioBrush').hidden = studio.tool === 'erase';
+  $('studioWallToggle').checked = studio.showWall;
+  $('studioEmpty').hidden = !!a;
+  // 3D
+  if (studio.viewer) {
+    const { grid, cut } = studioGrid();
+    studio.viewer.setGrid(grid);
+    studio.viewer.setHighlightCells(cut, '#c0392b');
+    if (frame) {
+      // Face the front of the asset, a little from above and to the right.
+      const v = studio.viewer;
+      v.frameAll();
+      const t = v.controls.target, r = v.camera.position.distanceTo(t) * 0.9;
+      v.camera.position.set(t.x + r * 0.35, t.y + r * 0.3, t.z + r * 0.89);
+      v.controls.update();
+      v.requestRender();
+    }
+  }
+}
+/** A click in the studio: place, paint or erase one cell of the asset. */
+function studioAction(info, mods = {}) {
+  const a = assetById(studio.assetId);
+  if (!a || !info) return;
+  const { grid } = studioGrid();
+  const at = info.cell && grid.blocks.get(blockKey(...info.cell));
+  if (mods.alt) { if (at) { studio.brush = at.mat; renderStudio(); } return; }
+  let run = null;
+  if (studio.tool === 'place') {
+    const t = info.place;
+    if (!t || grid.blocks.has(blockKey(...t))) return;
+    const c = { x: t[0], y: t[1], z: t[2], shape: studio.shape, mat: studio.brush };
+    if (studio.shape === 'slab' || studio.shape === 'stair') c.half = info.half || 'bottom';
+    if (studio.shape === 'stair') c.facing = info.facing;
+    if (studio.shape === 'full' && FAMILIES[studio.brush].axis) c.axis = info.normal[0] ? 'x' : info.normal[2] ? 'z' : 'y';
+    if (studio.shape === 'pane') c.axis = paneAxis(info);
+    run = () => { const i = studioCellIndex(a, ...t); if (i >= 0) a.cells.splice(i, 1); a.cells.push(c); };
+  } else if (studio.tool === 'paint') {
+    if (!at) return;
+    const [x, y, z] = info.cell;
+    const i = studioCellIndex(a, x, y, z);
+    if (i >= 0 && a.cells[i].shape !== 'erase') run = () => { a.cells[i].mat = studio.brush; };
+    else run = () => a.cells.push({ x, y, z, shape: 'full', mat: studio.brush });
+  } else if (studio.tool === 'erase') {
+    if (!at) return;
+    const [x, y, z] = info.cell;
+    const i = studioCellIndex(a, x, y, z);
+    // Erase what you clicked: an asset block goes; a block of the sample wall gets cut out.
+    if (i >= 0) run = () => a.cells.splice(i, 1);
+    else if (inSampleWall(x, y, z)) run = () => a.cells.push({ x, y, z, shape: 'erase' });
+  }
+  if (!run) return;
+  beginChange(mods.stroke ? 'studio:' + mods.stroke : null);
+  run();
+  afterChange();
+  renderStudio();
+}
+function wireStudio() {
+  $('btnAssets').addEventListener('click', () => openStudio());
+  $('studioClose').addEventListener('click', closeStudio);
+  $('studio').addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('popover').hidden) { e.stopPropagation(); closeStudio(); } });
+  $('assetNew').addEventListener('click', () => { studio.assetId = addAsset(null); renderStudio(true); $('assetName').focus(); $('assetName').select(); });
+  $('assetDup').addEventListener('click', () => { const a = assetById(studio.assetId); if (a) { studio.assetId = addAsset({ name: a.name + ' copy', cells: a.cells }); renderStudio(true); } });
+  $('assetDel').addEventListener('click', () => {
+    const a = assetById(studio.assetId);
+    if (!a) return;
+    const d = state.design, placed = d.stamps.filter((t) => t.asset === a.id).length;
+    beginChange(null);
+    d.assets = d.assets.filter((o) => o.id !== a.id);
+    d.stamps = d.stamps.filter((t) => t.asset !== a.id);
+    afterChange();
+    studio.assetId = d.assets[0] ? d.assets[0].id : null;
+    renderStudio(true);
+    toast(`Deleted ${a.name}` + (placed ? ` and its ${placed} placed ${placed === 1 ? 'copy' : 'copies'}` : ''), false, { label: 'Undo', run: () => { undo(); renderStudio(true); } });
+  });
+  $('assetName').addEventListener('input', () => {
+    const a = assetById(studio.assetId);
+    if (!a) return;
+    beginChange('assetname:' + a.id);
+    a.name = $('assetName').value.slice(0, 60) || 'Asset';
+    persist();
+    renderObjectList();
+    for (const btn of $('assetList').querySelectorAll('[aria-pressed=true] .obj-name')) btn.textContent = a.name;
+  });
+  $('assetName').addEventListener('change', () => afterChange());
+  const starters = $('assetStarter');
+  starters.replaceChildren(h('option', { value: '', text: 'Add a starter…' }), ...STARTER_ASSETS.map((t, i) => h('option', { value: String(i), text: t.name })), h('option', { value: 'all', text: 'All starters' }));
+  starters.addEventListener('change', () => {
+    const v = starters.value;
+    starters.value = '';
+    if (v === '') return;
+    const list = v === 'all' ? STARTER_ASSETS : [STARTER_ASSETS[+v]];
+    let last = null;
+    for (const t of list) last = addAsset(t);
+    studio.assetId = last;
+    renderStudio(true);
+  });
+  for (const b of $('studioTools').querySelectorAll('[data-stool]')) b.addEventListener('click', () => { studio.tool = b.dataset.stool; if (studio.viewer) studio.viewer.setTool(studio.tool, { shape: studio.shape }); renderStudio(); });
+  for (const b of $('studioShapes').querySelectorAll('[data-sshape]')) b.addEventListener('click', () => { studio.shape = b.dataset.sshape; if (studio.viewer) studio.viewer.setTool(studio.tool, { shape: studio.shape }); renderStudio(); });
+  $('studioBrush').addEventListener('click', () => openPicker($('studioBrush'), { title: 'Block to build with', keys: fullFamilies(), current: studio.brush, onPick: (k) => { studio.brush = k; renderStudio(); } }));
+  $('studioWallMat').addEventListener('click', () => openPicker($('studioWallMat'), { title: 'Sample wall block', keys: fullFamilies(), current: studio.wallMat, onPick: (k) => { studio.wallMat = k; renderStudio(); } }));
+  $('studioWallToggle').addEventListener('change', (e) => { studio.showWall = e.target.checked; renderStudio(); });
+  $('studioFrame').addEventListener('click', () => studio.viewer && studio.viewer.frameAll());
+  $('studioPlace').addEventListener('click', () => {
+    const a = assetById(studio.assetId);
+    if (!a) return;
+    if (!a.cells.length) { toast('This asset is empty: build something first'); return; }
+    state.stampAsset = a.id;
+    closeStudio();
+    setTool('stamp');
+  });
+  $('stampPick').addEventListener('change', (e) => {
+    if (e.target.value === '__studio') { renderStampPick(); openStudio(state.stampAsset); return; }
+    state.stampAsset = e.target.value;
+  });
+}
+
 // ------------------------------------------------------------------ palette manager
 // Every place a material is used, as roles ("Roof", "Trim & ridge", "Wall mix", ...), each with
 // setters, so a material can be replaced everywhere, in one role only, or in one object only.
@@ -526,6 +817,11 @@ function paletteUses(scopeId = null) {
   for (const g of d.segments) if (inScope(g)) add(g.material, 'Wall segments', null, g.id, (t) => { g.material = t; });
   for (const f of d.fills) if (inScope(f)) add(f.material, 'Fills', f.shape === 'stair' ? 'stairs' : f.shape === 'slab' ? 'slab' : f.shape === 'pane' ? 'pane' : null, f.id, (t) => { f.material = t; });
   if (!scopeId) for (const e of d.edits || []) if (e.mat) add(e.mat, 'Hand-placed', null, null, editSet(e));
+  // Assets: their blocks (changing one changes every placed copy).
+  for (const a of d.assets || []) {
+    if (scopeId && !d.stamps.some((t) => t.id === scopeId && t.asset === a.id)) continue;
+    for (const c of a.cells) if (c.mat) add(c.mat, 'Assets', c.shape === 'stair' ? 'stairs' : c.shape === 'slab' ? 'slab' : c.shape === 'pane' ? 'pane' : null, a.id, editSet(c));
+  }
   if (state.grid) for (const blk of state.grid.blocks.values()) {
     if (scopeId && blk.src !== scopeId) continue;
     if (blk.mat && FAMILIES[blk.mat]) entry(blk.mat).count++;
@@ -677,12 +973,13 @@ function renderObjectList() {
   const focusedId = document.activeElement && ul.contains(document.activeElement) ? document.activeElement.id : null;
   ul.replaceChildren();
   const d = state.design;
-  $('objectCount').textContent = String(d.boxes.length + d.pillars.length + d.segments.length + d.fills.length);
+  $('objectCount').textContent = String(d.boxes.length + d.pillars.length + d.segments.length + d.fills.length + (d.stamps || []).length);
   const groups = [
     ['Boxes', d.boxes, 'box'],
     ['Pillars', d.pillars, 'pillar'],
     ['Wall segments', d.segments, 'segment'],
     ['Fills', d.fills, 'fill'],
+    ['Placed assets', d.stamps || [], 'stamp'],
   ];
   for (const [label, arr, kind] of groups) {
     if (!arr.length) continue;
@@ -693,6 +990,7 @@ function renderObjectList() {
       if (kind === 'box') meta = `${o.w}×${o.d} ${o.roof.type}`;
       else if (kind === 'pillar') meta = `(${o.x},${o.z}) h${o.h}`;
       else if (kind === 'fill') meta = `${o.outline === 'circle' ? '○ ' : ''}${o.w}×${o.d}×${o.h}`;
+      else if (kind === 'stamp') meta = `(${o.x},${o.baseY},${o.z}) ${o.facing}`;
       else meta = `(${o.x0},${o.z0})→(${o.x1},${o.z1})`;
       const btn = h('button', {
         class: 'obj', id: 'obj-' + o.id, type: 'button',
@@ -853,6 +1151,16 @@ const SCHEMA = {
       { path: ['capMat'], label: 'Capital material', type: 'material', roof: true, wide: true, show: (o) => o.cap !== 'none' },
     ] },
   ],
+  stamp: [
+    { group: 'Placed asset', fields: [
+      { path: ['asset'], label: 'Asset', type: 'select', wide: true, options: () => state.design.assets.map((a) => [a.id, a.name]) },
+      { path: ['facing'], label: 'Faces', type: 'select', options: DIR_OPTIONS, hint: 'The way its front points out of the wall.' },
+      { path: ['x'], label: 'x', type: 'int' },
+      { path: ['baseY'], label: 'y', type: 'int' },
+      { path: ['z'], label: 'z', type: 'int' },
+      { path: ['edit'], label: 'Edit this asset', type: 'action', wide: true, hint: 'Every copy on the building changes with it.', run: (id) => { const f = findObject(id); if (f) openStudio(f.obj.asset); } },
+    ] },
+  ],
   fill: [
     { group: 'Fill', fields: [
       { path: ['x'], label: 'x (west edge)', type: 'int' },
@@ -914,7 +1222,7 @@ function renderProps(valuesOnly = false) {
   const key = f.kind + ':' + f.obj.id;
   if (valuesOnly && state.propsFor === key) { syncPropValues(); return; }
   state.propsFor = key;
-  $('propsTitle').textContent = { box: 'Box', pillar: 'Pillar', segment: 'Wall segment', fill: 'Fill' }[f.kind];
+  $('propsTitle').textContent = { box: 'Box', pillar: 'Pillar', segment: 'Wall segment', fill: 'Fill', stamp: 'Placed asset' }[f.kind];
   $('propsId').textContent = f.obj.id;
   body.replaceChildren();
 
@@ -960,6 +1268,7 @@ function objectSize(kind, o) {
   if (kind === 'box') return [o.w, o.wallH, o.d];
   if (kind === 'pillar') return [o.size || 1, o.h, o.size || 1];
   if (kind === 'fill') return [o.w, o.h, o.d];
+  if (kind === 'stamp') { const a = assetById(o.asset); const c = a ? stampCells(a, o) : []; if (!c.length) return [1, 1, 1]; const ext = (k) => Math.max(...c.map((v) => v[k])) - Math.min(...c.map((v) => v[k])) + 1; return [ext('x'), ext('y'), ext('z')]; }
   return [Math.abs(o.x1 - o.x0) + 1, o.h, Math.abs(o.z1 - o.z0) + 1];
 }
 function cloneObject(id, n = state.clone.n, dirName = state.clone.dir, gap = state.clone.gap) {
@@ -973,7 +1282,7 @@ function cloneObject(id, n = state.clone.n, dirName = state.clone.dir, gap = sta
   const made = [];
   for (let k = 1; k <= n; k++) {
     const c = JSON.parse(JSON.stringify(f.obj));
-    c.id = newId(d, { box: 'b', pillar: 'p', segment: 's', fill: 'f' }[f.kind], new Set(made));
+    c.id = newId(d, { box: 'b', pillar: 'p', segment: 's', fill: 'f', stamp: 't' }[f.kind], new Set(made));
     if (f.kind === 'box') c.name = 'Box ' + c.id.replace(/^b/, '');
     if (f.kind === 'box' && step[1] > 0 && c.details) c.details.door = false; // upper floors: no doorway into thin air
     if (f.kind === 'segment') { c.x0 += step[0] * k; c.x1 += step[0] * k; c.z0 += step[2] * k; c.z1 += step[2] * k; }
@@ -1054,7 +1363,7 @@ function buildField(f, field) {
       return wrap;
     }
     case 'select':
-      input = h('select', { id }, field.options.map(([v, l]) => h('option', { value: String(v), text: l })));
+      input = h('select', { id }, (typeof field.options === 'function' ? field.options(f.obj) : field.options).map(([v, l]) => h('option', { value: String(v), text: l })));
       input.addEventListener('change', () => commit(field.numeric ? Number(input.value) : input.value));
       break;
     case 'action':
@@ -1341,6 +1650,7 @@ const TOOL_HINTS = {
   paint: 'Click a wall or roof to repaint it · One block repaints just that block · Shift+drag paints a stroke · Alt+click picks up a material · drag or right-drag to orbit, middle-drag to pan',
   place: 'Click a block face (or the ground) to place · Stairs face the way you look · Shift+drag places a row · Alt+click picks up a material · drag or right-drag to orbit, middle-drag to pan',
   erase: 'Click a block to remove it · Shift+drag erases a stroke · drag or right-drag to orbit, middle-drag to pan',
+  stamp: 'Point at a wall: the asset turns to face out of it · click to place · Esc to stop · Assets… to make or edit one',
 };
 const AREA_HINTS = {
   paint: 'Drag a rectangle to repaint every block on that layer · click for one block · right-drag to orbit',
@@ -1349,7 +1659,7 @@ const AREA_HINTS = {
 };
 const AREA_MAX = 128 * 128;
 const FILL_MAX = 256 * 256 * 8;
-const toolOpts = () => ({ shape: state.shape, area: state.area, circle: state.area && state.circle });
+const toolOpts = () => ({ shape: state.shape, area: state.tool !== 'stamp' && state.area, circle: state.tool !== 'stamp' && state.area && state.circle });
 /** on: false (one block), true / 'area' (rectangle) or 'circle'. */
 function setArea(on) {
   state.area = !!on && on !== 'one';
@@ -1444,7 +1754,13 @@ function selectBlocks(cells, { add = false } = {}) {
 }
 const STAIR_ARROWS = { north: '↑', east: '→', south: '↓', west: '←' };
 function setTool(tool) {
+  if (tool === 'stamp' && !assetById(state.stampAsset)) {
+    // Nothing to place yet: pick (or make) one in the Asset Studio.
+    if (state.design.assets.length) state.stampAsset = state.design.assets[0].id;
+    else { openStudio(); return; }
+  }
   state.tool = tool;
+  if (viewer && tool !== 'stamp') viewer.setGhost(null);
   if (tool !== 'select' && state.selectedBlocks.length) select(null);
   if (viewer) viewer.setTool(tool, toolOpts());
   updateToolbar();
@@ -1471,7 +1787,9 @@ function updateToolbar() {
   const t = state.tool;
   $('brushBtn').hidden = t !== 'paint' && t !== 'place';
   $('scopeSeg').hidden = t !== 'paint';
-  $('areaSeg').hidden = t === 'select';
+  $('areaSeg').hidden = t === 'select' || t === 'stamp';
+  $('stampPick').hidden = t !== 'stamp';
+  if (t === 'stamp') renderStampPick();
   for (const b of $('areaSeg').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.area === (!state.area ? 'one' : state.circle ? 'circle' : 'area')));
   $('shapeSeg').hidden = t !== 'place';
   const n = state.design ? countEdits() : 0;
@@ -1482,7 +1800,7 @@ function updateToolbar() {
   $('brushBtn').querySelector('.mat-name').textContent = famName(state.brush);
   $('brushBtn').title = 'Brush material: ' + famName(state.brush);
   $('toolHint').hidden = t === 'select';
-  $('toolHint').textContent = ((state.area ? AREA_HINTS[t] : TOOL_HINTS[t]) || '').replace(/rectangle \(Shift = square\)|rectangle/, (m) => (state.area && state.circle ? 'circle' + (m.length > 9 ? ' (Shift = round)' : '') : m));
+  $('toolHint').textContent = ((state.area && t !== 'stamp' ? AREA_HINTS[t] : TOOL_HINTS[t]) || '').replace(/rectangle \(Shift = square\)|rectangle/, (m) => (state.area && state.circle ? 'circle' + (m.length > 9 ? ' (Shift = round)' : '') : m));
 }
 /** Every edit list with the cell offset that turns its coordinates into world cells. */
 function editLists() {
@@ -1518,6 +1836,7 @@ const PART_NAMES = { wallMaterial: 'walls', 'roof.material': 'roof', 'details.tr
 function blockAction(info, mods = {}) {
   const g = state.grid;
   if (!g || !info) return;
+  if (state.tool === 'stamp') { placeStamp(info); return; }
   const at = info.cell && g.blocks.get(blockKey(...info.cell));
   if (mods.alt) {
     if (at) { setBrush(at.mat); toast('Brush: ' + famName(at.mat)); }
@@ -2262,6 +2581,14 @@ function onKeyDown(e) {
     if (!$('popover').hidden) { e.preventDefault(); closePicker(); return; }
     if (!$('confirmBar').hidden) { e.preventDefault(); closeConfirm(); return; }
   }
+  // The Asset Studio covers the building: only its own keys (Esc, undo / redo) apply.
+  if (studio.open) {
+    if (e.key === 'Escape') { e.preventDefault(); closeStudio(); return; }
+    if (isTyping(e.target)) return;
+    const k = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) { e.preventDefault(); if (k === 'y' || e.shiftKey) redo(); else undo(); }
+    return;
+  }
   if (isTyping(e.target)) return;
   const mod = e.ctrlKey || e.metaKey;
   const k = e.key.toLowerCase();
@@ -2345,6 +2672,7 @@ function wire() {
   $('btnAddSegment').addEventListener('click', addSegment);
   $('btnAutoDetails').addEventListener('click', () => autoDetails(null));
   wirePaletteWin();
+  wireStudio();
   // Scale: the whole build, or the selected object, by a factor.
   const scaleEst = () => {
     const k = +$('scaleFactor').value || 1;

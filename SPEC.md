@@ -326,3 +326,12 @@ Page contract (the artifact host wraps the file in its own doctype/head/body): w
   nearest footprint cell lies in the stacked box (no ledge across a tower flush with a gable end); lower-tier walls stop
   below a stacked box's base in its footprint. Step 5 and the seal pass
   then run once over everything; walls start under their own tier's roof.
+
+- **Assets** (`design.assets`: `{ id 'a…', name, cells }`, cells like box edits relative to the
+  asset: z = 0 the wall layer, +z out of the wall, 'erase' cuts) and **stamps** (`design.stamps`:
+  `{ id 't…', asset, x, baseY, z, facing }`). The asset's anchor is the middle of its bottom row
+  (assetAnchor); stampCells turns the cells so +z points `facing` and moves the anchor to (x, baseY,
+  z). The build applies stamps after texture variation and before hand edits: erase cells delete,
+  others put blocks (role 'stamp', src = stamp id, path 'asset'). Stamps of a missing asset are
+  dropped. The Asset Studio is a second Viewer showing a sample wall (z = 0) with the asset's
+  cells applied; clicks edit the asset's cells.

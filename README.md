@@ -63,6 +63,13 @@ No build step is needed to develop: serve the folder with any static web server
   with "Wall/Roof mix blocks", then pick each one, or leave a slot on Auto for a look-alike.
   With the Grime pattern the mixes are layered by height: mix 1 (Top) highest, the last (Bottom) lowest,
   blending into each other rather than meeting in lines.
+- **Assets** (top bar) opens the Asset Studio, a separate 3D builder for parts like windows,
+  doors, balconies and lamps, saved in the project's gallery. Build against a sample wall: Erase
+  cuts holes into it, blocks in its layer replace it, blocks in front stick out. Ten starter
+  assets are one click away (Add a starter). "Place on building" (or the Asset tool) then
+  places it: point at the side of any wall and it turns to face out of it; click to place.
+  Placed copies stay linked to their asset, so editing it updates every copy; each copy can be
+  selected, moved, turned (R) or deleted like any object.
 - **Scale…** (Objects panel) makes the whole build, or just the selected object, bigger or
   smaller by any factor (×½ to ×8). Edges scale about the build's centre at ground level, so
   shared walls stay shared, gaps grow in proportion and roofs keep their pitch; overhangs,

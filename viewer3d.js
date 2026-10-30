@@ -6,7 +6,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { familyTexture } from './textures.js';
 import { FAMILIES } from './blocks.js';
-import { rotatePatch } from './engine.js';
+import { rotatePatch, stampCells } from './engine.js';
 import { DIRS, STAIR_SHAPES, STAIR_HALVES, stairBoxes, WALL_BOXES, uvForVertex, roofHeightEstimate, lowerBound, shapeBoxes, rayBox, meshGrid } from './mesher.js';
 
 export * from './mesher.js';
@@ -60,8 +60,17 @@ function shareGeometry(g) {
 // 3D bounds and resizing of objects (pure)
 // ---------------------------------------------------------------------------
 
-/** World-cell bounds of an object: x0..x1, y0..y1, z0..z1 (max exclusive). */
-export function objBounds(type, o) {
+/** World-cell bounds of an object: x0..x1, y0..y1, z0..z1 (max exclusive). Placed assets
+ * need the design (for their asset). */
+export function objBounds(type, o, design = null) {
+  if (type === 'stamp') {
+    const asset = design && (design.assets || []).find((a) => a.id === o.asset);
+    const cells = asset ? stampCells(asset, o) : [];
+    if (!cells.length) return { x0: o.x, x1: o.x + 1, y0: o.baseY, y1: o.baseY + 1, z0: o.z, z1: o.z + 1 };
+    const b = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity, z0: Infinity, z1: -Infinity };
+    for (const c of cells) { b.x0 = Math.min(b.x0, c.x); b.x1 = Math.max(b.x1, c.x + 1); b.y0 = Math.min(b.y0, c.y); b.y1 = Math.max(b.y1, c.y + 1); b.z0 = Math.min(b.z0, c.z); b.z1 = Math.max(b.z1, c.z + 1); }
+    return b;
+  }
   if (type === 'box' || type === 'fill') return { x0: o.x, x1: o.x + o.w, y0: o.baseY, y1: o.baseY + (type === 'fill' ? o.h : o.wallH), z0: o.z, z1: o.z + o.d };
   if (type === 'pillar') { const n = o.size || 1; return { x0: o.x, x1: o.x + n, y0: o.baseY, y1: o.baseY + Math.max(1, o.h), z0: o.z, z1: o.z + n }; }
   return { x0: Math.min(o.x0, o.x1), x1: Math.max(o.x0, o.x1) + 1, y0: o.baseY, y1: o.baseY + Math.max(1, o.h), z0: Math.min(o.z0, o.z1), z1: Math.max(o.z0, o.z1) + 1 };
@@ -74,6 +83,7 @@ const SIZE_MAX = { box: { xz: 512, y: 128 }, fill: { xz: 256, y: 128 }, pillar: 
 
 /** Which sides of an object can be dragged: a segment only lengthens along its own line. */
 export function resizableSides(type, o) {
+  if (type === 'stamp') return { x: false, y: false, z: false }; // a placed asset keeps its template's size
   if (type !== 'segment') return { x: true, y: true, z: true };
   const alongZ = o.x0 === o.x1 && o.z0 !== o.z1;
   return { x: !alongZ, y: true, z: alongZ || o.x0 === o.x1 };
@@ -129,7 +139,7 @@ export function snapTargets(design, excludeId = null) {
   const out = [];
   const add = (type, o) => {
     if (!o || o.id === excludeId) return;
-    const b = objBounds(type, o);
+    const b = objBounds(type, o, design);
     const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
     out.push({ x: cx, z: cz, kind: 'center', id: o.id });
     for (const x of [b.x0, b.x1]) for (const z of [b.z0, b.z1]) out.push({ x, z, kind: 'corner', id: o.id });
@@ -139,6 +149,7 @@ export function snapTargets(design, excludeId = null) {
   for (const f of (design && design.fills) || []) add('fill', f);
   for (const p of (design && design.pillars) || []) add('pillar', p);
   for (const sg of (design && design.segments) || []) add('segment', sg);
+  for (const t of (design && design.stamps) || []) add('stamp', t);
   return out;
 }
 
@@ -440,11 +451,49 @@ export class Viewer {
     return null;
   }
 
+  /**
+   * A see-through preview of blocks about to be placed: [{x, y, z, color, cut}] (cut cells show
+   * as dark outlines of the holes), or null to clear.
+   */
+  setGhost(cells) {
+    if (this._ghost) { this.scene.remove(this._ghost); this._ghost.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); this._ghost = null; }
+    if (cells && cells.length) {
+      const g = new THREE.Group();
+      const solid = cells.filter((c) => !c.cut), cut = cells.filter((c) => c.cut);
+      const m4 = new THREE.Matrix4();
+      if (solid.length) {
+        // Drawn over the wall it will sit in, so it shows where it goes.
+        const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.98, 0.98, 0.98), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.7, depthTest: false, depthWrite: false }), solid.length);
+        const col = new THREE.Color();
+        solid.forEach((c, i) => { m4.makeTranslation(c.x + 0.5, c.y + 0.5, c.z + 0.5); mesh.setMatrixAt(i, m4); mesh.setColorAt(i, col.set(c.color || '#cccccc')); });
+        mesh.renderOrder = 24; mesh.frustumCulled = false;
+        g.add(mesh);
+      }
+      if (cut.length) {
+        const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1.04, 1.04, 1.04), new THREE.MeshBasicMaterial({ color: 0x111111, transparent: true, opacity: 0.35, depthTest: false, depthWrite: false }), cut.length);
+        cut.forEach((c, i) => { m4.makeTranslation(c.x + 0.5, c.y + 0.5, c.z + 0.5); mesh.setMatrixAt(i, m4); });
+        mesh.renderOrder = 24; mesh.frustumCulled = false;
+        g.add(mesh);
+      }
+      // An outline round the whole thing.
+      const b = { x0: Infinity, y0: Infinity, z0: Infinity, x1: -Infinity, y1: -Infinity, z1: -Infinity };
+      for (const c of cells) { b.x0 = Math.min(b.x0, c.x); b.y0 = Math.min(b.y0, c.y); b.z0 = Math.min(b.z0, c.z); b.x1 = Math.max(b.x1, c.x + 1); b.y1 = Math.max(b.y1, c.y + 1); b.z1 = Math.max(b.z1, c.z + 1); }
+      const box = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(b.x1 - b.x0 + 0.06, b.y1 - b.y0 + 0.06, b.z1 - b.z0 + 0.06)),
+        new THREE.LineBasicMaterial({ color: new THREE.Color(cssVar(this.container, '--accent', '#d9814a')), depthTest: false, transparent: true, opacity: 0.9 }));
+      box.position.set((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2);
+      box.renderOrder = 25;
+      g.add(box);
+      this._ghost = g;
+      this.scene.add(g);
+    }
+    this.requestRender();
+  }
+
   /** Tint these world cells (show where a material is), or clear with null. One draw call. */
-  setHighlightCells(cells) {
+  setHighlightCells(cells, colorCss = null) {
     if (this._hlCells) { this.scene.remove(this._hlCells); this._hlCells.geometry.dispose(); this._hlCells.material.dispose(); this._hlCells = null; }
     if (cells && cells.length) {
-      const color = new THREE.Color(cssVar(this.container, '--accent', '#d9814a'));
+      const color = new THREE.Color(colorCss || cssVar(this.container, '--accent', '#d9814a'));
       const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1.06, 1.06, 1.06), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.45, depthTest: false, depthWrite: false }), cells.length);
       const m4 = new THREE.Matrix4();
       cells.forEach(([x, y, z], i) => { m4.makeTranslation(x + 0.5, y + 0.5, z + 0.5); mesh.setMatrixAt(i, m4); });
@@ -787,6 +836,7 @@ export class Viewer {
     for (const p of d.pillars || []) if (p.id === id) return { type: 'pillar', obj: p };
     for (const s of d.segments || []) if (s.id === id) return { type: 'segment', obj: s };
     for (const f of d.fills || []) if (f.id === id) return { type: 'fill', obj: f };
+    for (const t of d.stamps || []) if (t.id === id) return { type: 'stamp', obj: t };
     return null;
   }
 
@@ -808,7 +858,7 @@ export class Viewer {
     const accent = new THREE.Color(cssVar(this.container, '--accent', '#d9814a'));
     const solid = new THREE.LineBasicMaterial({ color: accent, depthTest: false, transparent: true });
     const { type, obj } = found;
-    const b = objBounds(type, obj);
+    const b = objBounds(type, obj, this.design);
     // The 3D frame: all twelve edges of the bounds.
     const { x0, x1, y0, y1, z0, z1 } = b;
     const P = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -1275,6 +1325,7 @@ export class Viewer {
           if (this.tool !== 'select' && this._hoverEvt) {
             const info = this.pickBlock(this._hoverEvt);
             this._setHover(info);
+            if (this.cb.onHoverInfo) this.cb.onHoverInfo(info);
             // Area mode: show the snap point a drag would start from.
             const y = info && (this.tool === 'place' ? info.place : info.cell);
             const n = info && info.normal;
@@ -1331,7 +1382,7 @@ export class Viewer {
     if (d.mode === 'move' && this.snap) {
       // Snap the object's centre to another's centre or edge middle, or a corner to a corner.
       if (!d.targets) d.targets = snapTargets(this.design, d.id);
-      const b = objBounds(d.objType, d.start);
+      const b = objBounds(d.objType, d.start, this.design);
       const r = this._snapRadius(p.x, d.planeY, p.z);
       const anchors = [[(b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2, ['center', 'mid']]];
       for (const x of [b.x0, b.x1]) for (const z of [b.z0, b.z1]) anchors.push([x, z, ['corner']]);

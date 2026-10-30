@@ -429,6 +429,21 @@
   .export-status.error { color: var(--danger); }
 
   /* ---------- popover (swatch picker) ---------- */
+  /* Asset Studio (a second 3D builder over the app) */
+  .studio { position: fixed; inset: 0; z-index: 45; display: flex; flex-direction: column; background: var(--bg); }
+  .studio-head { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+  .studio-head #assetName { width: 220px; }
+  .studio-tip { font-size: 12px; flex: 1; min-width: 200px; }
+  .studio-main { flex: 1; display: flex; min-height: 0; }
+  .studio-gallery { width: 260px; padding: 12px; border-right: 1px solid var(--line); background: var(--panel); overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+  .studio-view { flex: 1; position: relative; min-width: 0; }
+  .studio-view canvas { display: block; }
+  .studio-bar { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; pointer-events: none; }
+  .studio-bar > * { pointer-events: auto; }
+  #stampPick { width: auto; max-width: 240px; }
+  .studio-bar .matbtn { width: auto; }
+  .studio-empty { position: absolute; top: 40%; left: 0; right: 0; text-align: center; pointer-events: none; z-index: 1; }
+  @media (max-width: 720px) { .studio-main { flex-direction: column; } .studio-gallery { width: auto; max-height: 34vh; border-right: 0; border-bottom: 1px solid var(--line); } }
   /* palette manager (floating window) */
   .pal-win {
     position: fixed; z-index: 40; top: 72px; right: 24px; width: min(440px, calc(100vw - 32px));
@@ -576,6 +591,7 @@
     <input type="text" id="designName" placeholder="Design name" autocomplete="off" spellcheck="false">
     <div class="palette" id="paletteBar" aria-label="Palette: materials used in this design"></div>
     <div class="topbar-actions">
+ <button class="btn" id="btnAssets" title="Asset Studio: make windows, doors and other parts to place on walls">Assets</button>
       <button class="btn" id="btnPresets" aria-haspopup="dialog" aria-expanded="false" title="Apply or save a style preset">Presets</button>
       <button class="btn icon" id="btnUndo" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>&#x21B6;</button>
       <button class="btn icon" id="btnRedo" title="Redo (Ctrl+Y)" aria-label="Redo" disabled>&#x21B7;</button>
@@ -667,7 +683,9 @@
             <button type="button" data-tool="paint" aria-pressed="false" title="Paint walls, roofs or single blocks (B)">Paint</button>
             <button type="button" data-tool="place" aria-pressed="false" title="Place single blocks (P)">Place</button>
             <button type="button" data-tool="erase" aria-pressed="false" title="Remove single blocks (E)">Erase</button>
+            <button type="button" data-tool="stamp" aria-pressed="false" title="Place an asset (window, door, …) on a wall">Asset</button>
           </div>
+          <select class="hud" id="stampPick" aria-label="Asset to place" hidden></select>
           <button type="button" class="matbtn hud brush" id="brushBtn" aria-haspopup="dialog" aria-expanded="false" hidden>
             <img alt="" width="28" height="28"><span class="mat-name"></span><span class="caret">▼</span>
           </button>
@@ -772,6 +790,47 @@
   </main>
 
   <!-- Swatch picker popover -->
+  <div class="studio" id="studio" role="dialog" aria-labelledby="studioTitle" hidden>
+    <div class="studio-head">
+      <strong id="studioTitle">Asset Studio</strong>
+      <label class="sr-only" for="assetName">Asset name</label>
+      <input type="text" id="assetName" placeholder="Asset name" autocomplete="off" spellcheck="false">
+      <span class="muted studio-tip">Build on the sample wall: erase cuts holes, blocks in front stick out. The bottom middle is where it attaches.</span>
+      <button class="btn primary" id="studioPlace" type="button" title="Close the studio and click walls to place this asset">Place on building</button>
+      <button class="btn" id="studioClose" type="button" title="Back to the building (Esc)">Done</button>
+    </div>
+    <div class="studio-main">
+      <aside class="studio-gallery">
+        <div class="add-row">
+          <button class="btn small" id="assetNew" type="button">+ New</button>
+          <button class="btn small" id="assetDup" type="button">Duplicate</button>
+          <button class="btn small danger" id="assetDel" type="button">Delete</button>
+        </div>
+        <select id="assetStarter" aria-label="Add a starter asset"></select>
+        <ul class="obj-list" id="assetList" aria-label="Assets in this project"></ul>
+      </aside>
+      <div class="studio-view" id="studioView">
+        <p class="studio-empty muted" id="studioEmpty">Make a new asset or add a starter to begin.</p>
+        <div class="studio-bar">
+          <div class="seg hud" id="studioTools">
+            <button type="button" data-stool="place" aria-pressed="true" title="Add blocks">Place</button>
+            <button type="button" data-stool="paint" aria-pressed="false" title="Change a block's material">Paint</button>
+            <button type="button" data-stool="erase" aria-pressed="false" title="Remove a block; on the sample wall, cut a hole">Erase</button>
+          </div>
+          <div class="seg hud" id="studioShapes">
+            <button type="button" data-sshape="full" aria-pressed="true">Block</button>
+            <button type="button" data-sshape="slab" aria-pressed="false">Slab</button>
+            <button type="button" data-sshape="stair" aria-pressed="false">Stairs</button>
+            <button type="button" data-sshape="pane" aria-pressed="false">Pane</button>
+          </div>
+          <button type="button" class="matbtn hud brush" id="studioBrush" title="Block to build with"><img alt="" width="28" height="28"><span class="mat-name"></span><span class="caret">▼</span></button>
+          <span class="hud check studio-wall"><input type="checkbox" id="studioWallToggle" checked><label for="studioWallToggle">Sample wall</label></span>
+          <button type="button" class="matbtn hud brush" id="studioWallMat" title="Block of the sample wall (only for the preview)"><img alt="" width="28" height="28"><span class="mat-name"></span><span class="caret">▼</span></button>
+          <button class="btn" id="studioFrame" type="button">Frame</button>
+        </div>
+      </div>
+    </div>
+  </div>
   <div class="pal-win" id="palWin" role="dialog" aria-labelledby="palTitle" hidden>
     <div class="pal-head" id="palHead">
       <strong id="palTitle">Palette</strong>
