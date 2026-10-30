@@ -113,7 +113,10 @@ No build step is needed to develop: serve the folder with any static web server
   "One block" mode. **Place** (P) puts a block, slab, stairs, pane, door or trapdoor against the face
   you click or on the ground; stairs and doors face the way you look, slabs go top or bottom by where
   you click, and a trapdoor clicked on a wall hangs open against it (on a floor it lies flat). Doors
-  come in every wood, iron and copper; select a placed door to open or close it or flip its hinge. **Area** (A) mode:
+  come in every wood, iron and copper; select a placed door to open or close it or flip its hinge.
+  **Turn** (T) turns any block that has a direction (stairs, doors, trapdoors, panes, logs) a
+  quarter clockwise when you click it, Shift+click turns it back. It works on roof stairs and
+  asset blocks too, not just ones you placed. **Area** (A) mode:
   drag a rectangle to place a whole floor, erase or repaint every block on that layer in one step
   (Shift keeps it square). **Circle** mode does the same with the circle or oval that fits the
   rectangle. A placed area becomes a **fill**: one object (listed under Fills) that you select, move,

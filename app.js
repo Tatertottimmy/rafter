@@ -1730,7 +1730,8 @@ const AREA_HINTS = {
 };
 const AREA_MAX = 128 * 128;
 const FILL_MAX = 256 * 256 * 8;
-const toolOpts = () => ({ shape: state.shape, area: state.tool !== 'stamp' && state.area, circle: state.tool !== 'stamp' && state.area && state.circle });
+const noArea = () => state.tool === 'stamp' || state.tool === 'turn';
+const toolOpts = () => ({ shape: state.shape, area: !noArea() && state.area, circle: !noArea() && state.area && state.circle });
 /** on: false (one block), true / 'area' (rectangle) or 'circle'. */
 function setArea(on) {
   state.area = !!on && on !== 'one';
@@ -1859,7 +1860,7 @@ function updateToolbar() {
   const t = state.tool;
   $('brushBtn').hidden = t !== 'paint' && t !== 'place';
   $('scopeSeg').hidden = t !== 'paint';
-  $('areaSeg').hidden = t === 'select' || t === 'stamp';
+  $('areaSeg').hidden = t === 'select' || t === 'stamp' || t === 'turn';
   $('stampPick').hidden = t !== 'stamp';
   if (t === 'stamp') renderStampPick();
   for (const b of $('areaSeg').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.area === (!state.area ? 'one' : state.circle ? 'circle' : 'area')));
@@ -1919,6 +1920,7 @@ function blockAction(info, mods = {}) {
     if (at) { setBrush(at.mat); toast('Brush: ' + famName(at.mat)); }
     return;
   }
+  if (state.tool === 'turn') { turnBlockAt(info, mods); return; }
   let run = null, msg = null;
   if (state.tool === 'paint') {
     if (!at) return;
@@ -1966,6 +1968,39 @@ function blockAction(info, mods = {}) {
   syncPropValues();
   updateToolbar();
   if (msg && !mods.stroke) toast(msg, false, { label: 'Undo', run: undo });
+}
+const TURN_CW = { north: 'east', east: 'south', south: 'west', west: 'north' };
+const TURN_CCW = { north: 'west', west: 'south', south: 'east', east: 'north' };
+/**
+ * Turn tool: click any block that has a direction (stairs, doors, trapdoors, panes, logs) to turn
+ * it a quarter clockwise; Shift turns it back. Hand-placed blocks change their edit; anything the
+ * building or an asset made gets an edit of its own in that cell.
+ */
+function turnBlockAt(info, mods = {}) {
+  const g = state.grid;
+  if (!info.cell) return;
+  let [x, y, z] = info.cell;
+  let at = g.blocks.get(blockKey(x, y, z));
+  if (!at) return;
+  if (at.kind === 'door' && at.props.half === 'upper') { y--; at = g.blocks.get(blockKey(x, y, z)) || at; }
+  const back = !!(mods.shift || mods.stroke);
+  const turn = (f) => (back ? TURN_CCW : TURN_CW)[f] || 'north';
+  const p = at.props || {};
+  const ex = placedEdit([x, y, z]);
+  // The edit this block would have if it were hand-placed, then turned.
+  let next;
+  if (at.kind === 'stair') next = { shape: 'stair', facing: turn(p.facing), half: p.half || 'bottom' };
+  else if (at.kind === 'door') next = { shape: 'door', facing: turn(p.facing), hinge: p.hinge === 'right' ? 'right' : 'left', ...(p.open === 'true' ? { open: true } : {}) };
+  else if (at.kind === 'trapdoor') next = { shape: 'trapdoor', facing: turn(p.facing), half: p.half || 'bottom', ...(p.open === 'true' ? { open: true } : {}) };
+  else if (at.kind === 'pane') next = { shape: 'pane', axis: p.east === 'true' || p.west === 'true' ? 'z' : 'x' };
+  else if (at.kind === 'full' && p.axis) next = { shape: 'full', axis: ({ y: 'x', x: 'z', z: 'y' })[p.axis] };
+  if (!next) { if (!mods.stroke) toast(famName(at.mat) + (at.kind === 'slab' ? ' slab' : '') + ' has no direction to turn', true); return; }
+  beginChange(mods.stroke ? 'stroke:' + mods.stroke : null);
+  if (ex && ex.edit.shape === next.shape) {
+    for (const k of ['facing', 'half', 'hinge', 'axis']) if (next[k] !== undefined) ex.edit[k] = next[k];
+  } else putEdit({ x, y, z, mat: at.mat, ...next }, ownerBox(at.src));
+  afterChange();
+  syncPropValues();
 }
 /**
  * Door: faces the way you look, so you walk in through it. Trapdoor: hinged on the block you
@@ -2713,7 +2748,7 @@ function onKeyDown(e) {
   }
   if (k === 'r' && state.selectedId) { e.preventDefault(); rotateSelected(e.shiftKey ? -1 : 1); return; }
   if (k === 'a' && state.tool !== 'select' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); setArea(!state.area); return; }
-  const toolKey = { v: 'select', b: 'paint', p: 'place', e: 'erase' }[k];
+  const toolKey = { v: 'select', b: 'paint', p: 'place', e: 'erase', t: 'turn' }[k];
   if (toolKey && !e.altKey) { e.preventDefault(); setTool(toolKey); return; }
   if (e.key.startsWith('Arrow') && state.selectedId) {
     e.preventDefault();
