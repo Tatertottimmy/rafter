@@ -424,6 +424,7 @@ function select(id, opts = {}) {
   if (!opts.keepBlocks && state.selectedBlocks.length) { state.selectedBlocks = []; if (viewer) viewer.setSelectedBlocks([]); }
   const changed = id !== state.selectedId || opts.keepBlocks;
   state.selectedId = id;
+  if ((id && changed) || (opts.keepBlocks && state.selectedBlocks.length)) showProps();
   if (viewer && !opts.fromViewer) viewer.setSelection(id);
   renderObjectList();
   renderProps(!changed);
@@ -460,9 +461,7 @@ function renderPalette() {
   if (state.grid) for (const b of state.grid.blocks.values()) { const u = touch(b.mat, false, false); if (u) u.count++; }
 
   const entries = [...usage.entries()].filter(([k, u]) => u.count > 0 || u.core).sort((a, b) => b[1].count - a[1].count || famName(a[0]).localeCompare(famName(b[0])));
-  const open = h('button', { class: 'palette-label palette-open', type: 'button', 'aria-haspopup': 'dialog', 'aria-controls': 'palWin', title: 'Open the palette manager' }, 'Palette');
-  open.addEventListener('click', () => openPaletteWin());
-  bar.replaceChildren(open);
+  bar.replaceChildren();
   for (const [key, u] of entries) {
     const chip = h('button', {
       class: 'chip', id: 'chip-' + key, type: 'button', 'aria-haspopup': 'dialog',
@@ -471,7 +470,29 @@ function renderPalette() {
     chip.addEventListener('click', () => openPaletteWin(key));
     bar.append(chip);
   }
+  if (!entries.length) bar.append(h('p', { class: 'empty', text: 'No blocks yet.' }));
   renderPaletteWin();
+  renderAssetsPane();
+}
+
+/** The Assets tab: this project's assets, each one click from placing or editing. */
+function renderAssetsPane() {
+  const ul = $('assetPaneList');
+  if (!ul) return;
+  const d = state.design;
+  ul.replaceChildren();
+  for (const a of d.assets) {
+    const uses = (d.stamps || []).filter((t) => t.asset === a.id).length;
+    const place = h('button', { class: 'btn small primary', type: 'button', text: 'Place', title: 'Click walls to place ' + a.name });
+    place.addEventListener('click', () => { state.stampAsset = a.id; setTool('stamp'); renderStampPick(); });
+    const edit = h('button', { class: 'btn small', type: 'button', text: 'Edit', title: 'Open ' + a.name + ' in the Asset Studio' });
+    edit.addEventListener('click', () => openStudio(a.id));
+    ul.append(h('li', { class: 'asset-row' + (state.tool === 'stamp' && state.stampAsset === a.id ? ' active' : '') },
+      iconEl(assetMaterial(a), 22),
+      h('span', {}, h('span', { class: 'asset-name', text: a.name }), h('span', { class: 'asset-size', text: assetSize(a) + (uses ? ' · placed ' + uses + '×' : '') })),
+      h('span', { class: 'asset-btns' }, place, edit)));
+  }
+  if (!d.assets.length) ul.append(h('li', { class: 'empty', text: 'No assets yet. Open the Asset Studio to make one or add a starter window, door or balcony.' }));
 }
 
 // ------------------------------------------------------------------ assets
@@ -609,6 +630,7 @@ async function openStudio(assetId = null) {
 function closeStudio() {
   studio.open = false;
   $('studio').hidden = true;
+  renderAssetsPane();
 }
 function studioCellIndex(a, x, y, z) { return a.cells.findIndex((c) => c.x === x && c.y === y && c.z === z); }
 function inSampleWall(x, y, z) { return studio.showWall && z === 0 && x >= -studio.W && x <= studio.W && y >= studio.Y0 && y <= studio.Y1; }
@@ -1833,6 +1855,7 @@ function setTool(tool) {
     else { openStudio(); return; }
   }
   state.tool = tool;
+  renderAssetsPane();
   if (viewer && tool !== 'stamp') viewer.setGhost(null);
   if (tool !== 'select' && state.selectedBlocks.length) select(null);
   if (viewer) viewer.setTool(tool, toolOpts());
@@ -2472,7 +2495,7 @@ function planCellSize() {
   return clamp(Math.floor(avail / cols), 10, 26);
 }
 function renderPlan() {
-  if (!state.grid || $('panePlans').hidden) return;
+  if (!state.grid || $('pane-plans').hidden || rails.rightClosed) return;
   try {
     drawLayer($('planCanvas'), state.grid, state.currentLayer, { cell: planCellSize(), bounds: planBounds() });
   } catch (e) { console.error('plan draw failed', e); }
@@ -2523,17 +2546,32 @@ function renderStatus() {
 }
 
 // ------------------------------------------------------------------ tabs
-const TABS = { plans: ['tabPlans', 'panePlans'], materials: ['tabMaterials', 'paneMaterials'], export: ['tabExport', 'paneExport'] };
-function setTab(name) {
-  state.tab = name;
-  for (const [key, [tabId, paneId]] of Object.entries(TABS)) {
+// Vertical tabs down each side. Clicking the open tab folds its panel away for a bigger 3D view.
+const RAILS = { left: ['objects', 'palette', 'assets'], right: ['props', 'plans', 'materials', 'export'] };
+const rails = { left: 'objects', right: 'plans', leftClosed: false, rightClosed: false };
+function setRail(side, name, { toggle = false, open = true } = {}) {
+  const closedKey = side + 'Closed';
+  if (toggle && rails[side] === name && !rails[closedKey]) rails[closedKey] = true;
+  else if (open) rails[closedKey] = false;
+  rails[side] = name;
+  for (const key of RAILS[side]) {
     const on = key === name;
-    $(tabId).setAttribute('aria-selected', String(on));
-    $(tabId).tabIndex = on ? 0 : -1;
-    $(paneId).hidden = !on;
+    const tab = $('tab-' + key);
+    tab.setAttribute('aria-selected', String(on && !rails[closedKey]));
+    tab.tabIndex = on ? 0 : -1;
+    $('pane-' + key).hidden = !on;
   }
-  if (name === 'plans') { renderPlan(); renderLegend(); }
+  $('work').classList.toggle(side + '-closed', rails[closedKey]);
+  if (name === 'props') $('tab-props').classList.remove('badge');
+  try { localStorage.setItem('rafter.rails', JSON.stringify(rails)); } catch (e) { /* ignore */ }
+  if (name === 'plans' && !rails[closedKey]) { renderPlan(); renderLegend(); }
 }
+/** Something got selected: show its properties (marking the tab when its panel is folded away). */
+function showProps() {
+  if (rails.right !== 'props') setRail('right', 'props', { open: false });
+  if (rails.rightClosed) $('tab-props').classList.add('badge');
+}
+const setTab = (name) => setRail('right', name);
 
 // ------------------------------------------------------------------ downloads
 const CRC_TABLE = (() => {
@@ -2855,17 +2893,19 @@ function wire() {
   $('layerUp').addEventListener('click', () => setLayer(state.currentLayer + 1));
   $('planZoom').addEventListener('change', renderPlan);
 
-  for (const [name, [tabId]] of Object.entries(TABS)) $(tabId).addEventListener('click', () => setTab(name));
-  $('rightPanel').querySelector('.tabs').addEventListener('keydown', (e) => {
-    const order = Object.keys(TABS);
-    const i = order.indexOf(state.tab);
-    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+  for (const side of ['left', 'right']) {
+    for (const key of RAILS[side]) $('tab-' + key).addEventListener('click', () => setRail(side, key, { toggle: true }));
+    $(side === 'left' ? 'railLeft' : 'railRight').addEventListener('keydown', (e) => {
+      if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
       e.preventDefault();
-      const next = order[(i + (e.key === 'ArrowRight' ? 1 : order.length - 1)) % order.length];
-      setTab(next);
-      $(TABS[next][0]).focus();
-    }
-  });
+      const order = RAILS[side], i = order.indexOf(rails[side]);
+      const next = order[(i + (e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : order.length - 1)) % order.length];
+      setRail(side, next);
+      $('tab-' + next).focus();
+    });
+  }
+  $('btnExportQuick').addEventListener('click', () => setRail('right', 'export'));
+  $('btnPalWin').addEventListener('click', () => openPaletteWin());
 
   for (const b of $('toolSeg').querySelectorAll('button')) b.addEventListener('click', () => setTool(b.dataset.tool));
   for (const b of $('scopeSeg').querySelectorAll('button')) b.addEventListener('click', () => { state.paintScope = b.dataset.scope; updateToolbar(); });
@@ -2925,7 +2965,11 @@ function boot() {
   startWorker();
   renderProps();
   updateHistoryButtons();
-  setTab('plans');
+  try { Object.assign(rails, JSON.parse(localStorage.getItem('rafter.rails') || '{}')); } catch (e) { /* ignore */ }
+  if (!RAILS.left.includes(rails.left)) rails.left = 'objects';
+  if (!RAILS.right.includes(rails.right)) rails.right = 'plans';
+  setRail('left', rails.left, { open: false });
+  setRail('right', rails.right, { open: false });
   initViewer();
   // Pre-warm swatch thumbnails in idle time so the first picker opens instantly.
   const warm = () => { try { for (const k of fullFamilies()) swatchURL(k); } catch (e) { /* ignore */ } };

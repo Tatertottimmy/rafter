@@ -590,6 +590,130 @@
     .legend li > span:nth-child(3) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .fields { grid-template-columns: 1fr 1fr; }
   }
+
+  /* ---------- shell v2: header, toolbar, side rails ---------- */
+  #app { gap: 8px; padding-block: 8px; }
+  .topbar { flex-wrap: nowrap; gap: 12px; min-height: 36px; }
+  .brand { font-size: 20px; }
+  #designName { flex: 0 1 260px; }
+  .topbar-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .btn-group { display: inline-flex; }
+  .btn-group > .btn { border-radius: 0; margin-left: -1px; }
+  .btn-group > .btn:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
+  .btn-group > .btn:last-of-type { border-radius: 0 var(--radius) var(--radius) 0; }
+  .btn-group > .btn:hover:not(:disabled) { position: relative; z-index: 1; }
+
+  .toolbar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px;
+    padding: 5px 6px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    min-width: 0;
+  }
+  .toolbar > * { min-width: 0; }
+  .toolbar .seg {
+    display: inline-flex; gap: 2px; padding: 2px;
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--bg);
+  }
+  .toolbar #toolSeg button { font-weight: 600; }
+  .toolbar select#stampPick { width: auto; max-width: 200px; }
+  .toolbar .matbtn.brush { background: var(--panel); }
+  .toolbar-spacer { flex: 1 1 0; }
+  .view-tools { display: flex; align-items: center; gap: 10px; padding-left: 10px; border-left: 1px solid var(--line); }
+  .view-tools .slice { font-size: 12px; white-space: nowrap; color: var(--muted); }
+  .view-tools output { font-family: var(--font-mono); color: var(--fg); min-width: 3ch; display: inline-block; text-align: right; }
+  .view-tools input[type="range"] { width: 140px; accent-color: var(--accent); }
+  .view-tools .check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; white-space: nowrap; }
+
+  .work {
+    --lw: 280px; --rw: 350px; --rail: 46px;
+    grid-template-columns: var(--rail) var(--lw) minmax(0, 1fr) var(--rw) var(--rail);
+    gap: 8px;
+  }
+  .work.left-closed { --lw: 0px; }
+  .work.right-closed { --rw: 0px; }
+  .work.left-closed #leftPanel, .work.right-closed #rightPanel { display: none; }
+  .work.left-closed { grid-template-columns: var(--rail) minmax(0, 1fr) var(--rw) var(--rail); }
+  .work.right-closed { grid-template-columns: var(--rail) var(--lw) minmax(0, 1fr) var(--rail); }
+  .work.left-closed.right-closed { grid-template-columns: var(--rail) minmax(0, 1fr) var(--rail); }
+  .rail {
+    display: flex; flex-direction: column; gap: 4px;
+    padding: 4px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    min-height: 0; overflow: auto; scrollbar-width: none;
+  }
+  .rail-tab {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    padding: 10px 0;
+    border: 0; border-radius: var(--radius);
+    background: none; color: var(--muted);
+    cursor: pointer;
+    font-family: var(--font-display); font-weight: 600; font-size: 12.5px; letter-spacing: 0.01em;
+    position: relative;
+  }
+  .rail-tab svg { width: 18px; height: 18px; flex: none; }
+  .rail-tab span { writing-mode: vertical-rl; white-space: nowrap; }
+  .rail-left .rail-tab span { transform: rotate(180deg); }
+  .rail-tab:hover { color: var(--fg); background: var(--soft); }
+  .rail-tab[aria-selected="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .rail-left .rail-tab[aria-selected="true"]::before, .rail-right .rail-tab[aria-selected="true"]::before {
+    content: ""; position: absolute; top: 8px; bottom: 8px; width: 3px; border-radius: 3px; background: var(--accent);
+  }
+  .rail-left .rail-tab[aria-selected="true"]::before { left: -4px; }
+  .rail-right .rail-tab[aria-selected="true"]::before { right: -4px; }
+  .rail-tab.badge::after {
+    content: ""; position: absolute; top: 6px; right: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+  }
+  .panel.side { display: flex; flex-direction: column; }
+  .panel.side > .pane { padding: 12px; min-height: 0; }
+  .pane-head {
+    display: flex; align-items: center; gap: 8px;
+    margin: -12px -12px 12px; padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+    position: sticky; top: -12px; z-index: 2; background: var(--panel);
+  }
+  .pane-head h2 { flex: 1; }
+  .pane-head .btn { flex: none; }
+  .pane > .hint { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+  .props-head .spacer { display: none; }
+
+  /* palette list (left tab) */
+  .palette { flex-direction: column; align-items: stretch; flex-wrap: nowrap; overflow: visible; gap: 4px; padding: 0; }
+  .palette .chip { border-radius: var(--radius); padding: 4px 8px 4px 4px; width: 100%; }
+  .palette .chip > span:not(.count) { flex: 1; text-align: left; }
+
+  /* assets list (left tab) */
+  .asset-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 5px 6px; border-radius: var(--radius); }
+  .asset-row:hover { background: var(--soft); }
+  .asset-row img { width: 22px; height: 22px; image-rendering: pixelated; display: block; }
+  .asset-row .asset-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .asset-row .asset-size { display: block; font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+  .asset-row .asset-btns { display: flex; gap: 4px; }
+  .asset-row.active { outline: 1px solid var(--accent); }
+
+  .viewport-bottom { flex-direction: row; align-items: flex-end; flex-wrap: wrap; justify-content: space-between; }
+
+  @media (max-width: 1200px) {
+    .work { --lw: 250px; --rw: 310px; --rail: 42px; }
+    .brand small { display: none; }
+  }
+  @media (max-width: 900px) {
+    .topbar { flex-wrap: wrap; }
+    .work { display: flex; flex-direction: column; }
+    .viewport-wrap { order: -2; }
+    .rail { flex-direction: row; overflow-x: auto; }
+    .rail-tab { flex-direction: row; padding: 6px 10px; }
+    .rail-tab span, .rail-left .rail-tab span { writing-mode: horizontal-tb; transform: none; }
+    .rail-tab[aria-selected="true"]::before { display: none; }
+    .rail-left { order: 1; } #leftPanel { order: 2; } .rail-right { order: 3; } #rightPanel { order: 4; }
+    .work.left-closed #leftPanel, .work.right-closed #rightPanel { display: none; }
+    .view-tools { border-left: 0; padding-left: 0; flex-wrap: wrap; }
+    .pane-head { position: static; }
+  }
 </style>
 
 <div id="app">
@@ -600,31 +724,88 @@
     </h1>
     <label for="designName" class="sr-only">Design name</label>
     <input type="text" id="designName" placeholder="Design name" autocomplete="off" spellcheck="false">
-    <div class="palette" id="paletteBar" aria-label="Palette: materials used in this design"></div>
     <div class="topbar-actions">
- <button class="btn" id="btnAssets" title="Asset Studio: make windows, doors and other parts to place on walls">Assets</button>
+      <div class="btn-group" role="group" aria-label="History">
+        <button class="btn icon" id="btnUndo" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>&#x21B6;</button>
+        <button class="btn icon" id="btnRedo" title="Redo (Ctrl+Y)" aria-label="Redo" disabled>&#x21B7;</button>
+      </div>
       <button class="btn" id="btnPresets" aria-haspopup="dialog" aria-expanded="false" title="Apply or save a style preset">Presets</button>
-      <button class="btn icon" id="btnUndo" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>&#x21B6;</button>
-      <button class="btn icon" id="btnRedo" title="Redo (Ctrl+Y)" aria-label="Redo" disabled>&#x21B7;</button>
-      <button class="btn" id="btnSave">Save JSON</button>
-      <button class="btn" id="btnLoad">Load JSON</button>
-      <input type="file" id="fileLoad" accept=".json,application/json" hidden>
-      <button class="btn" id="btnReset">Reset to sample</button>
+      <div class="btn-group" role="group" aria-label="File">
+        <button class="btn" id="btnLoad" title="Open a saved .rafter.json design">Open</button>
+        <button class="btn" id="btnSave" title="Save this design as a .rafter.json file">Save</button>
+        <input type="file" id="fileLoad" accept=".json,application/json" hidden>
+        <button class="btn" id="btnReset" title="Start again from the sample house">Reset</button>
+      </div>
+      <button class="btn primary" id="btnExportQuick" type="button" title="Download a schematic: .litematic or .schem">Export</button>
     </div>
   </header>
 
-  <main class="work">
-    <!-- LEFT: objects + properties -->
-    <aside class="panel" id="leftPanel" aria-label="Objects and properties">
-      <section class="section" id="objectsSection">
-        <div class="section-head">
+  <div class="toolbar" id="toolbar" role="toolbar" aria-label="Edit tools">
+          <div class="seg" id="toolSeg" aria-label="Tool">
+            <button type="button" data-tool="select" aria-pressed="true" title="Select, move, resize and rotate objects (V). Alt+drag selects placed blocks in a rectangle">Select</button>
+            <button type="button" data-tool="paint" aria-pressed="false" title="Paint walls, roofs or single blocks (B)">Paint</button>
+            <button type="button" data-tool="place" aria-pressed="false" title="Place single blocks (P)">Place</button>
+            <button type="button" data-tool="erase" aria-pressed="false" title="Remove single blocks (E)">Erase</button>
+            <button type="button" data-tool="turn" aria-pressed="false" title="Turn stairs, doors, trapdoors, panes and logs: click to turn clockwise, Shift+click to turn back (T)">Turn</button>
+            <button type="button" data-tool="stamp" aria-pressed="false" title="Place an asset (window, door, …) on a wall">Asset</button>
+          </div>
+    <select id="stampPick" aria-label="Asset to place" hidden></select>
+    <button type="button" class="matbtn brush" id="brushBtn" aria-haspopup="dialog" aria-expanded="false" hidden>
+      <img alt="" width="28" height="28"><span class="mat-name"></span><span class="caret">▼</span>
+    </button>
+          <div class="seg" id="shapeSeg" aria-label="Shape" hidden>
+            <button type="button" data-shape="full" aria-pressed="true">Block</button>
+            <button type="button" data-shape="slab" aria-pressed="false">Slab</button>
+            <button type="button" data-shape="stair" aria-pressed="false">Stairs</button>
+            <button type="button" data-shape="pane" aria-pressed="false" title="Glass pane: runs along the wall you click">Pane</button>
+            <button type="button" data-shape="door" aria-pressed="false" title="Door (wood, iron or copper): two blocks tall, faces the way you look">Door</button>
+            <button type="button" data-shape="trapdoor" aria-pressed="false" title="Trapdoor: hinged on the block you click, or flat on a floor">Trapdoor</button>
+          </div>
+    <div class="seg" id="scopeSeg" aria-label="Paint scope" hidden>
+      <button type="button" data-scope="part" aria-pressed="true" title="Repaint the whole wall, roof, trim, post… the block belongs to">Whole part</button>
+      <button type="button" data-scope="block" aria-pressed="false" title="Repaint only the block you click">One block</button>
+    </div>
+    <div class="seg" id="areaSeg" aria-label="Area" hidden>
+      <button type="button" data-area="one" aria-pressed="true" title="Click acts on one block">One</button>
+      <button type="button" data-area="area" aria-pressed="false" title="Drag a rectangle to fill, clear or repaint a whole floor (A)">Area</button>
+      <button type="button" data-area="circle" aria-pressed="false" title="Drag out a circle or oval (Shift keeps it round)">Circle</button>
+    </div>
+    <button type="button" class="btn small" id="btnClearEdits" hidden title="Remove every hand-placed, painted and erased block">Clear edits</button>
+    <span class="toolbar-spacer"></span>
+    <div class="view-tools" role="group" aria-label="View">
+      <label class="slice" for="sliceSlider" title="Show the build up to this layer">Layer <output id="sliceValue" for="sliceSlider">0</output></label>
+      <input type="range" id="sliceSlider" min="0" max="0" value="0" step="1" aria-label="Show up to layer">
+      <span class="check" title="Cut the 3D view at the layer"><input type="checkbox" id="sliceToggle" checked><label for="sliceToggle">Slice</label></span>
+      <span class="check" title="Snap to the centres, corners and edge middles of objects while placing an area or moving an object. Ctrl+drag an area to draw it out from the centre."><input type="checkbox" id="snapToggle" checked><label for="snapToggle">Snap</label></span>
+      <button class="btn small" id="btnFrame" title="Fit the whole design in view">Frame</button>
+    </div>
+  </div>
+
+  <main class="work" id="work">
+    <nav class="rail rail-left" id="railLeft" role="tablist" aria-orientation="vertical" aria-label="Build">
+      <button class="rail-tab" role="tab" type="button" id="tab-objects" data-side="left" data-pane="objects" aria-controls="pane-objects" aria-selected="false" tabindex="-1" title="Objects: boxes, pillars, walls, fills, placed assets">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4"/><path d="M3 17l9 4 9-4"/></svg><span>Objects</span>
+      </button>
+      <button class="rail-tab" role="tab" type="button" id="tab-palette" data-side="left" data-pane="palette" aria-controls="pane-palette" aria-selected="false" tabindex="-1" title="Every block in the design">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Palette</span>
+      </button>
+      <button class="rail-tab" role="tab" type="button" id="tab-assets" data-side="left" data-pane="assets" aria-controls="pane-assets" aria-selected="false" tabindex="-1" title="Windows, doors and other parts to place on walls">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M4 12h16M12 3v18"/></svg><span>Assets</span>
+      </button>
+    </nav>
+
+    <aside class="panel side" id="leftPanel" aria-label="Build">
+      <div class="pane" id="pane-objects" role="tabpanel" aria-labelledby="tab-objects">
+        <div class="pane-head">
           <h2>Objects</h2>
           <span class="muted mono" id="objectCount"></span>
         </div>
         <div class="add-row">
           <button class="btn small" id="btnAddBox">+ Box</button>
           <button class="btn small" id="btnAddPillar">+ Pillar</button>
-          <button class="btn small" id="btnAddSegment">+ Wall segment</button>
+          <button class="btn small" id="btnAddSegment">+ Wall</button>
+        </div>
+        <div class="add-row">
           <button class="btn small" id="btnAutoDetails" title="Add trims, corner posts, beams, a foundation course and windows to every box">Auto details</button>
           <button class="btn small" id="btnScale" aria-expanded="false" aria-controls="scaleBox" title="Make the whole build (or one object) bigger or smaller, keeping its proportions">Scale…</button>
         </div>
@@ -652,16 +833,23 @@
           </div>
         </div>
         <ul class="obj-list" id="objectList" aria-label="Objects"></ul>
-      </section>
-      <section class="section" id="propsSection">
-        <div class="props-head">
-          <h2 id="propsTitle">Properties</h2>
-          <span class="id" id="propsId"></span>
-          <span class="spacer"></span>
+      </div>
+      <div class="pane" id="pane-palette" role="tabpanel" aria-labelledby="tab-palette" hidden>
+        <div class="pane-head">
+          <h2>Palette</h2>
+          <button class="btn small" id="btnPalWin" type="button" aria-haspopup="dialog" aria-controls="palWin" title="Replace, swap and find blocks">Manage…</button>
         </div>
-        <p class="empty" id="propsEmpty">Select an object in the list or click it in the 3D view. Drag to move it; drag the nodes on its frame to resize (top and bottom change the height, corners two sides at once) and the round knob to rotate (or press R).</p>
-        <div id="propsBody"></div>
-      </section>
+        <p class="hint">Every block in the build, most used first. Click one to change it.</p>
+        <div class="palette" id="paletteBar" aria-label="Palette: materials used in this design"></div>
+      </div>
+      <div class="pane" id="pane-assets" role="tabpanel" aria-labelledby="tab-assets" hidden>
+        <div class="pane-head">
+          <h2>Assets</h2>
+          <button class="btn small primary" id="btnAssets" type="button" title="Asset Studio: make windows, doors and other parts to place on walls">Asset Studio</button>
+        </div>
+        <p class="hint">Parts you build once and click onto walls. Placed copies follow their asset.</p>
+        <ul class="obj-list" id="assetPaneList" aria-label="Assets in this project"></ul>
+      </div>
     </aside>
 
     <!-- CENTRE: 3D viewport -->
@@ -670,68 +858,24 @@
       <div class="viewport-error" id="viewportError" hidden>
         <p>The 3D view could not start (three.js failed to load). Plans, materials and export still work. <span id="viewportErrorMsg" class="mono"></span></p>
       </div>
-      <div class="viewport-overlay">
-        <div class="hud">
-          <label for="sliceSlider">Show up to layer <output id="sliceValue" for="sliceSlider">0</output></label>
-          <input type="range" id="sliceSlider" min="0" max="0" value="0" step="1">
-        </div>
-        <div class="hud check">
-          <input type="checkbox" id="sliceToggle" checked>
-          <label for="sliceToggle">Slice 3D view to this layer</label>
-        </div>
-        <div class="hud check" title="Snap to the centres, corners and edge middles of objects while placing an area or moving an object. Ctrl+drag an area to draw it out from the centre.">
-          <input type="checkbox" id="snapToggle" checked>
-          <label for="snapToggle">Snap</label>
-        </div>
-        <button class="btn" id="btnFrame" title="Fit the whole design in view">Frame</button>
-      </div>
       <div class="viewport-bottom">
-        <div class="status" id="status" aria-live="polite"></div>
         <p class="tool-hint" id="toolHint" hidden></p>
-        <div class="toolbar" id="toolbar" role="toolbar" aria-label="Edit tools">
-          <div class="seg hud" id="toolSeg">
-            <button type="button" data-tool="select" aria-pressed="true" title="Select, move, resize and rotate objects (V). Alt+drag selects placed blocks in a rectangle">Select</button>
-            <button type="button" data-tool="paint" aria-pressed="false" title="Paint walls, roofs or single blocks (B)">Paint</button>
-            <button type="button" data-tool="place" aria-pressed="false" title="Place single blocks (P)">Place</button>
-            <button type="button" data-tool="erase" aria-pressed="false" title="Remove single blocks (E)">Erase</button>
-            <button type="button" data-tool="turn" aria-pressed="false" title="Turn stairs, doors, trapdoors, panes and logs: click to turn clockwise, Shift+click to turn back (T)">Turn</button>
-            <button type="button" data-tool="stamp" aria-pressed="false" title="Place an asset (window, door, …) on a wall">Asset</button>
-          </div>
-          <select class="hud" id="stampPick" aria-label="Asset to place" hidden></select>
-          <button type="button" class="matbtn hud brush" id="brushBtn" aria-haspopup="dialog" aria-expanded="false" hidden>
-            <img alt="" width="28" height="28"><span class="mat-name"></span><span class="caret">▼</span>
-          </button>
-          <div class="seg hud" id="scopeSeg" hidden>
-            <button type="button" data-scope="part" aria-pressed="true" title="Repaint the whole wall, roof, trim, post… the block belongs to">Whole part</button>
-            <button type="button" data-scope="block" aria-pressed="false" title="Repaint only the block you click">One block</button>
-          </div>
-          <div class="seg hud" id="areaSeg" hidden>
-            <button type="button" data-area="one" aria-pressed="true" title="Click acts on one block">One</button>
-            <button type="button" data-area="area" aria-pressed="false" title="Drag a rectangle to fill, clear or repaint a whole floor (A)">Area</button>
-            <button type="button" data-area="circle" aria-pressed="false" title="Drag out a circle or oval (Shift keeps it round)">Circle</button>
-          </div>
-          <div class="seg hud" id="shapeSeg" hidden>
-            <button type="button" data-shape="full" aria-pressed="true">Block</button>
-            <button type="button" data-shape="slab" aria-pressed="false">Slab</button>
-            <button type="button" data-shape="stair" aria-pressed="false">Stairs</button>
-            <button type="button" data-shape="pane" aria-pressed="false" title="Glass pane: runs along the wall you click">Pane</button>
-            <button type="button" data-shape="door" aria-pressed="false" title="Door (wood, iron or copper): two blocks tall, faces the way you look">Door</button>
-            <button type="button" data-shape="trapdoor" aria-pressed="false" title="Trapdoor: hinged on the block you click, or flat on a floor">Trapdoor</button>
-          </div>
-          <button type="button" class="btn small" id="btnClearEdits" hidden title="Remove every hand-placed, painted and erased block">Clear edits</button>
-        </div>
+        <div class="status" id="status" aria-live="polite"></div>
       </div>
     </section>
 
-    <!-- RIGHT: tabs -->
-    <aside class="panel" id="rightPanel" aria-label="Plans, materials and export">
-      <div class="tabs" role="tablist" aria-label="Right panel">
-        <button class="tab" role="tab" id="tabPlans" aria-selected="true" aria-controls="panePlans">Layer plans</button>
-        <button class="tab" role="tab" id="tabMaterials" aria-selected="false" aria-controls="paneMaterials" tabindex="-1">Materials</button>
-        <button class="tab" role="tab" id="tabExport" aria-selected="false" aria-controls="paneExport" tabindex="-1">Export</button>
+    <aside class="panel side" id="rightPanel" aria-label="Details">
+      <div class="pane" id="pane-props" role="tabpanel" aria-labelledby="tab-props" hidden>
+        <div class="pane-head props-head">
+          <h2 id="propsTitle">Properties</h2>
+          <span class="id" id="propsId"></span>
+          <span class="spacer"></span>
+        </div>
+        <p class="empty" id="propsEmpty">Select an object in the list or click it in the 3D view. Drag to move it; drag the nodes on its frame to resize (top and bottom change the height, corners two sides at once) and the round knob to rotate (or press R).</p>
+        <div id="propsBody"></div>
       </div>
-
-      <div class="pane" id="panePlans" role="tabpanel" aria-labelledby="tabPlans">
+      <div class="pane" id="pane-plans" role="tabpanel" aria-labelledby="tab-plans">
+        <div class="pane-head"><h2>Layer plans</h2></div>
         <div class="layer-stepper">
           <button class="btn icon" id="layerDown" aria-label="Layer below" title="Layer below">&#x25BC;</button>
           <span class="layer-value">y = <output id="layerValue" for="sliceSlider">0</output></span>
@@ -754,7 +898,8 @@
         <p class="glyph-key"><b>Key:</b> solid = full block · hatched = slab (bar on top = upper slab) · arrow = stairs pointing uphill (hollow = upside-down) · dot = outer corner, ring = inner corner · small square = wall · faded = layer below.</p>
       </div>
 
-      <div class="pane" id="paneMaterials" role="tabpanel" aria-labelledby="tabMaterials" hidden>
+      <div class="pane" id="pane-materials" role="tabpanel" aria-labelledby="tab-materials" hidden>
+        <div class="pane-head"><h2>Materials</h2></div>
         <div class="table-wrap">
           <table id="materialsTable">
             <thead><tr><th></th><th>Material</th><th class="num">Count</th></tr></thead>
@@ -765,7 +910,8 @@
         <p class="note">Counts group by block id (slabs and stairs of a material are separate rows). One stack = 64.</p>
       </div>
 
-      <div class="pane" id="paneExport" role="tabpanel" aria-labelledby="tabExport" hidden>
+      <div class="pane" id="pane-export" role="tabpanel" aria-labelledby="tab-export" hidden>
+        <div class="pane-head"><h2>Export</h2></div>
         <div class="export-grid">
           <div class="field">
             <label for="authorName">Author</label>
@@ -801,6 +947,21 @@
         </div>
       </div>
     </aside>
+
+    <nav class="rail rail-right" id="railRight" role="tablist" aria-orientation="vertical" aria-label="Details">
+      <button class="rail-tab" role="tab" type="button" id="tab-props" data-side="right" data-pane="props" aria-controls="pane-props" aria-selected="false" tabindex="-1" title="Settings of the selected object">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg><span>Properties</span>
+      </button>
+      <button class="rail-tab" role="tab" type="button" id="tab-plans" data-side="right" data-pane="plans" aria-controls="pane-plans" aria-selected="false" tabindex="-1" title="Layer-by-layer build plans">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg><span>Layers</span>
+      </button>
+      <button class="rail-tab" role="tab" type="button" id="tab-materials" data-side="right" data-pane="materials" aria-controls="pane-materials" aria-selected="false" tabindex="-1" title="Block counts to gather">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14M5 9h14M5 14h14M5 19h9"/></svg><span>Materials</span>
+      </button>
+      <button class="rail-tab" role="tab" type="button" id="tab-export" data-side="right" data-pane="export" aria-controls="pane-export" aria-selected="false" tabindex="-1" title="Download for Litematica or WorldEdit">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v3h16v-3"/></svg><span>Export</span>
+      </button>
+    </nav>
   </main>
 
   <!-- Swatch picker popover -->

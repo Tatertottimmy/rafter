@@ -58,12 +58,18 @@ No build step is needed to develop: serve the folder with any static web server
 
 ## Using it
 
+- **Layout**: the header holds undo/redo, presets, Open / Save / Reset and Export. Under it the
+  toolbar has the tools (Select, Paint, Place, Erase, Turn, Asset) with their options, and the view
+  controls (layer slider, Slice, Snap, Frame). Vertical tabs run down both sides: **Objects**,
+  **Palette** and **Assets** on the left; **Properties**, **Layers**, **Materials** and **Export** on
+  the right. Selecting something opens Properties. Click the open tab again to fold its panel away
+  for a bigger 3D view. On a phone the tabs sit in a row under the 3D view.
 - **Texture** (box properties) is shared by every box: change it on any box and all of them
   follow. Tick "Own texture" on a box to give it separate settings. Walls and roofs can mix in up to six other blocks. Set how many
   with "Wall/Roof mix blocks", then pick each one, or leave a slot on Auto for a look-alike.
   With the Grime pattern the mixes are layered by height: mix 1 (Top) highest, the last (Bottom) lowest,
   blending into each other rather than meeting in lines.
-- **Assets** (top bar) opens the Asset Studio, a separate 3D builder for parts like windows,
+- **Assets** (left tab: Asset Studio, or Place / Edit beside each asset) opens the Asset Studio, a separate 3D builder for parts like windows,
   doors, balconies and lamps, saved in the project's gallery. Build against a sample wall: Erase
   cuts holes into it, blocks in its layer replace it, blocks in front stick out. Eleven starter
   assets are one click away (Add a starter). "Place on building" (or the Asset tool) then
