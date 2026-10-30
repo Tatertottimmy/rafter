@@ -176,7 +176,7 @@ function persistNow() {
   persistTimer = 0;
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.design)); } catch (e) { /* ignore */ }
 }
-addEventListener('pagehide', persistNow);
+addEventListener('pagehide', () => { if (persistTimer) persistNow(); }); // only unsaved changes: never a stale copy over another tab's
 document.addEventListener('visibilitychange', () => { if (document.hidden && persistTimer) persistNow(); });
 
 // ------------------------------------------------------------------ history
